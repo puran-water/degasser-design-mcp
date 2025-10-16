@@ -37,13 +37,17 @@ logger = logging.getLogger(__name__)
 # Default background water chemistry (municipal template converted to PHREEQC)
 DEFAULT_BACKGROUND_SOLUTION = build_phreeqc_solution(get_default_water_chemistry())
 
-# Mapping from aqueous master species to total component for mass balance
-AQUEOUS_TOTAL_COMPONENT_MAP = {
-    "H2S": "S(-2)",
-    "HS-": "S(-2)",
-    "CO2": "C(4)",
-    "Tce": "Tce",
-    "Ct": "Ct"
+# Mapping from aqueous master species to redox-specific tracking for mass balance
+# FIX 1 (Phase 2 Completion): Use redox-specific totals to exclude background chemistry
+# Codex validation: sol.total("S(-2)") and sol.total("C(4)") supported by PHREEQC
+# This fixes the 21% H2S mass balance error caused by tracking background SO4-2
+AQUEOUS_REDOX_STATE_MAP = {
+    "H2S": "S(-2)",    # Reduced sulfur only, excludes background SO4-2 (S(6))
+    "HS-": "S(-2)",    # Reduced sulfur
+    "CO2": "C(4)",     # Carbonate system (includes background HCO3-, needs subtraction)
+    "HCO3-": "C(4)",   # Carbonate system
+    "Tce": "Tce",      # VOCs use direct species (no redox states)
+    "Ct": "Ct"         # VOCs use direct species
 }
 
 
@@ -189,9 +193,43 @@ def equilibrium_stage(
         'temp': temperature_c,
         'units': solution_units
     })
-    solution_dict[aqueous_species_name] = C_liq_in_mg_L
 
+    # CRITICAL FIX (Codex validation): For pH-dependent species (H2S, CO2),
+    # use sol.change() AFTER solution creation to avoid duplicate analytical entries.
+    # PHREEQC only allows ONE analytical entry per element in the SOLUTION block.
+
+    # For VOCs (custom species), add to solution dict before creation
+    if aqueous_species_name not in ["H2S", "CO2"]:
+        solution_dict[aqueous_species_name] = C_liq_in_mg_L
+        logger.debug(f"Adding {aqueous_species_name}: {C_liq_in_mg_L:.3f} mg/L to solution dict")
+
+    # Create the solution with background chemistry (and VOCs if applicable)
+    logger.debug(f"Complete solution_dict before add_solution(): {solution_dict}")
     sol = pp.add_solution(solution_dict)
+
+    # FIX 1 (Phase 2): Track background C(4) for CO2 to enable delta tracking
+    # Background water has HCO3- (alkalinity) which is also C(4)
+    # We need to subtract this to isolate added CO2
+    background_C4_mol = 0.0
+    if aqueous_species_name == "CO2":
+        redox_state = AQUEOUS_REDOX_STATE_MAP.get("CO2")
+        background_C4_mol = sol.total(redox_state, units='mol') or 0.0
+        logger.debug(f"Background {redox_state} before adding CO2: {background_C4_mol:.6e} mol")
+
+    # Then add H2S/CO2 using sol.change() which uses REACTION blocks
+    # Must use the correct AQUEOUS SPECIES names from vitens.dat database
+    if aqueous_species_name == "H2S":
+        # Convert mg/L H2S to mol/kg (1 L ≈ 1 kg for dilute solutions)
+        # Use "HS-" which is the master species name in vitens.dat
+        mol_sulfide = (C_liq_in_mg_L / 1000.0) / 34.076  # H2S MW = 34.076
+        logger.debug(f"Adding {C_liq_in_mg_L:.3f} mg/L H2S = {mol_sulfide:.6e} mol HS- via sol.change()")
+        sol.change({"HS-": mol_sulfide}, units="mol")
+    elif aqueous_species_name == "CO2":
+        # Convert mg/L CO2 to mol/kg
+        # Use "CO2" which is the aqueous species name in vitens.dat
+        mol_co2 = (C_liq_in_mg_L / 1000.0) / 44.01  # CO2 MW = 44.01
+        logger.debug(f"Adding {C_liq_in_mg_L:.3f} mg/L CO2 = {mol_co2:.6e} mol CO2 via sol.change()")
+        sol.change({"CO2": mol_co2}, units="mol")
 
     # Create gas phase representing gas entering from stage above (counter-current)
     # Air stripping uses atmospheric air as carrier gas
@@ -234,9 +272,24 @@ def equilibrium_stage(
     # Equilibrate: PHREEQC handles speciation + gas-liquid equilibrium
     sol.interact(gas)
 
-    # Extract equilibrium results using total component balance
-    total_component = AQUEOUS_TOTAL_COMPONENT_MAP.get(aqueous_species_name, aqueous_species_name)
-    C_out_mol = sol.total(total_component, units='mol') or 0.0
+    # FIX 1 (Phase 2): Use redox-specific totals to exclude background chemistry
+    # This fixes the 21% H2S error caused by tracking background SO4-2
+    redox_component = AQUEOUS_REDOX_STATE_MAP.get(aqueous_species_name, aqueous_species_name)
+    C_after_total_mol = sol.total(redox_component, units='mol') or 0.0
+
+    # For CO2: Subtract background to get contaminant only
+    if aqueous_species_name == "CO2":
+        C_out_mol = C_after_total_mol - background_C4_mol
+        logger.debug(f"After interact - sol.total('{redox_component}'): {C_after_total_mol:.6e} mol")
+        logger.debug(f"Subtracting background: {background_C4_mol:.6e} mol")
+        logger.debug(f"CO2 contaminant (net): {C_out_mol:.6e} mol")
+    else:
+        # For H2S: S(-2) excludes background S(6), no subtraction needed
+        # For VOC: Direct species, no background
+        C_out_mol = C_after_total_mol
+        logger.debug(f"After interact - sol.total('{redox_component}'): {C_after_total_mol:.6e} mol")
+
+    # Convert mol to mg/L (multiply by MW and 1000)
     C_out_mg_L = C_out_mol * molecular_weight * 1000.0
 
     # Extract gas composition after equilibration
@@ -419,11 +472,17 @@ def solve_counter_current_stages(
         getattr(outcome.request, "air_water_ratio", 1.0)
     )
 
-    # Murphree stage efficiency for partial equilibrium
-    # This accounts for mass transfer limitations in real packed columns
-    # Typical values: 0.6-0.8 for well-designed columns
-    # Higher values needed for more stages to achieve target removal
-    murphree_efficiency = 0.85  # Tuned for 15-stage system
+    # FIX 3 (Phase 2): Adaptive Murphree efficiency for CO2 at high pH
+    # Codex validation: Reduces per-stage removal to prevent numerical instability
+    # At high pH, carbonate system is sensitive and needs gentler stripping
+    inlet_pH = outcome.request.water_ph if outcome.request.water_ph else 7.0
+
+    if application == "CO2" and inlet_pH > 7.0:
+        murphree_efficiency = 0.35  # Reduced for high-pH carbonate stability
+        logger.info(f"Using reduced Murphree efficiency η={murphree_efficiency} for CO2 at pH {inlet_pH:.1f}")
+    else:
+        # Standard efficiency for H2S, VOC, and low-pH CO2
+        murphree_efficiency = 0.7  # Standard value for well-designed columns
 
     logger.info(f"A/W ratio: {air_water_ratio:.1f} (volumetric), "
                 f"Murphree efficiency: {murphree_efficiency:.2f}")
@@ -472,14 +531,6 @@ def solve_counter_current_stages(
 
         # March through stages (bottom to top)
         for i in range(N_stages + 1):  # Need N_stages+1 points
-            # Skip if at boundary
-            if i == N_stages:
-                # Top stage - set outlet concentration
-                C_liq_new[i] = C_liq[i]  # Keep target outlet
-                y_gas_new[i] = 0.0  # Clean air inlet
-                pH_new[i] = pH[i]
-                continue
-
             # Liquid enters from stage below
             if i == 0:
                 C_in = C_inlet  # Feed at bottom
@@ -487,8 +538,10 @@ def solve_counter_current_stages(
                 C_in = C_liq[i-1]
 
             # Gas enters from stage above (counter-current!)
-            if i == N_stages - 1:
-                y_in = 0.0  # Clean air at top
+            # FIX 6 (Codex diagnosis): Top stage receives clean air (y_in=0)
+            # but must still be SOLVED, not skipped!
+            if i == N_stages:
+                y_in = 0.0  # Clean air inlet at top
             else:
                 y_in = y_gas[i+1]
 

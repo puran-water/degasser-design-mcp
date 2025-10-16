@@ -147,7 +147,7 @@ async def combined_simulation_mcp(
                 num_stages_initial=num_stages_initial,
                 find_optimal_stages=find_optimal_stages,
                 convergence_tolerance=0.01,
-                max_inner_iterations=100,  # Increased from 50 to 100
+                max_inner_iterations=200,  # FIX 5: Increased to 200 for improved convergence
                 validate_mass_balance_flag=True
             )
             result['tier2'] = tier2_result
