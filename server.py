@@ -37,8 +37,8 @@ mcp = FastMCP("degasser-design-calculator")
 # Phase 1: Tier 1 Heuristic Sizing (COMPLETE)
 from tools.heuristic_sizing import heuristic_sizing, list_available_packings
 
-# Phase 2: Tier 2 PHREEQC Gas-Liquid Equilibrium (TO BE IMPLEMENTED)
-# from tools.phreeqc_gas_equilibrium import simulate_gas_stripping
+# Phase 2: Tier 2 PHREEQC Gas-Liquid Equilibrium (85% COMPLETE)
+from tools.simulation_sizing import staged_column_simulation
 
 # Phase 3: Tier 3 WaterTAP Economic Costing (TO BE IMPLEMENTED)
 # from tools.watertap_costing import cost_degasser_system
@@ -47,12 +47,127 @@ from tools.heuristic_sizing import heuristic_sizing, list_available_packings
 # from tools.report_generator import generate_degasser_report
 # from tools.batch_optimization import batch_optimize_degasser
 
+# Create wrapper for heuristic_sizing that returns dict for MCP
+from dataclasses import asdict
+
+async def heuristic_sizing_mcp(
+    application: str,
+    water_flow_rate_m3_h: float,
+    inlet_concentration_mg_L: float,
+    outlet_concentration_mg_L: float,
+    air_water_ratio: float = 30.0,
+    temperature_c: float = 25.0,
+    packing_id: str = None,
+    henry_constant_25C: float = None,
+    water_ph: float = None,
+    water_chemistry_json: str = None,
+    include_blower_sizing: bool = True,
+    blower_efficiency_override: float = None,
+    motor_efficiency: float = 0.92
+):
+    """MCP wrapper for heuristic_sizing that returns dictionary."""
+    result = await heuristic_sizing(
+        application=application,
+        water_flow_rate_m3_h=water_flow_rate_m3_h,
+        inlet_concentration_mg_L=inlet_concentration_mg_L,
+        outlet_concentration_mg_L=outlet_concentration_mg_L,
+        air_water_ratio=air_water_ratio,
+        temperature_c=temperature_c,
+        packing_id=packing_id,
+        henry_constant_25C=henry_constant_25C,
+        water_ph=water_ph,
+        water_chemistry_json=water_chemistry_json,
+        include_blower_sizing=include_blower_sizing,
+        blower_efficiency_override=blower_efficiency_override,
+        motor_efficiency=motor_efficiency
+    )
+    # Convert Tier1Outcome dataclass to dictionary for MCP serialization
+    return asdict(result)
+
+# Create combined tool for Tier 1 + optional Tier 2
+async def combined_simulation_mcp(
+    application: str,
+    water_flow_rate_m3_h: float,
+    inlet_concentration_mg_L: float,
+    outlet_concentration_mg_L: float,
+    air_water_ratio: float = 30.0,
+    temperature_c: float = 25.0,
+    packing_id: str = None,
+    henry_constant_25C: float = None,
+    water_ph: float = None,
+    water_chemistry_json: str = None,
+    include_blower_sizing: bool = True,
+    blower_efficiency_override: float = None,
+    motor_efficiency: float = 0.92,
+    run_tier2: bool = False,
+    num_stages_initial: int = None,
+    find_optimal_stages: bool = True
+):
+    """
+    Combined Tier 1 + optional Tier 2 simulation.
+
+    Run Tier 1 heuristic sizing, and optionally continue with
+    Tier 2 staged column simulation for pH-coupled rigorous design.
+
+    Args:
+        (same as heuristic_sizing plus:)
+        run_tier2: Whether to run Tier 2 simulation (default: False)
+        num_stages_initial: Initial/fixed stage count for Tier 2 (default: None, auto-find)
+        find_optimal_stages: If True, use bisection to find optimal N (default: True)
+
+    Returns:
+        Dict with Tier 1 results, and 'tier2' key if run_tier2=True
+    """
+    # Run Tier 1
+    tier1_outcome = await heuristic_sizing(
+        application=application,
+        water_flow_rate_m3_h=water_flow_rate_m3_h,
+        inlet_concentration_mg_L=inlet_concentration_mg_L,
+        outlet_concentration_mg_L=outlet_concentration_mg_L,
+        air_water_ratio=air_water_ratio,
+        temperature_c=temperature_c,
+        packing_id=packing_id,
+        henry_constant_25C=henry_constant_25C,
+        water_ph=water_ph,
+        water_chemistry_json=water_chemistry_json,
+        include_blower_sizing=include_blower_sizing,
+        blower_efficiency_override=blower_efficiency_override,
+        motor_efficiency=motor_efficiency
+    )
+
+    # Convert to dictionary
+    result = asdict(tier1_outcome)
+
+    # Optionally run Tier 2
+    if run_tier2:
+        try:
+            logger.info("Running Tier 2 staged column simulation...")
+            tier2_result = staged_column_simulation(
+                tier1_outcome,
+                num_stages_initial=num_stages_initial,
+                find_optimal_stages=find_optimal_stages,
+                convergence_tolerance=0.01,
+                max_inner_iterations=100,  # Increased from 50 to 100
+                validate_mass_balance_flag=True
+            )
+            result['tier2'] = tier2_result
+            logger.info(f"Tier 2 complete: {tier2_result['theoretical_stages']} stages, "
+                       f"{tier2_result['tower_height_m']:.1f}m height")
+        except Exception as e:
+            logger.error(f"Tier 2 simulation failed: {e}")
+            result['tier2_error'] = str(e)
+
+    return result
+
 # Register tools
 # Tool 1: Fast Perry's-based heuristic sizing
-mcp.tool()(heuristic_sizing)
+mcp.tool()(heuristic_sizing_mcp)
 
 # Tool 2: List available packing catalog
 mcp.tool()(list_available_packings)
+
+# Tool 3: Combined Tier 1 + optional Tier 2 simulation
+mcp.tool()(combined_simulation_mcp)
 
 # Tool 3: PHREEQC gas-liquid equilibrium (Phase 2)
 # mcp.tool()(simulate_gas_stripping)
@@ -137,8 +252,8 @@ if __name__ == "__main__":
     logger.info("     - Perry's Eckert GPDC flooding correlation")
     logger.info("     - HTU/NTU method with Eq 14-158")
     logger.info("     - 9 packings in catalog with actual properties")
-    logger.info("     - MCP tools: heuristic_sizing, list_available_packings")
-    logger.info("  ⏳ Phase 2: Tier 2 PHREEQC Simulation (PENDING)")
+    logger.info("     - MCP tools: heuristic_sizing, list_available_packings, combined_simulation")
+    logger.info("  🔧 Phase 2: Tier 2 PHREEQC Simulation (85% COMPLETE)")
     logger.info("  ⏳ Phase 3: Tier 3 WaterTAP Costing (PENDING)")
     logger.info("  ⏳ Phase 4: Reports & Optimization (PENDING)")
 

@@ -13,6 +13,7 @@ Reference:
 from typing import Optional, Literal, List
 from dataclasses import dataclass
 from pydantic import BaseModel, Field, PositiveFloat, field_validator
+from utils.water_chemistry import WaterChemistryData
 
 
 class DesignWarning(BaseModel):
@@ -136,6 +137,16 @@ class HeuristicSizingInput(BaseModel):
             "(2) Use Tier 2 simulation tool for pH-coupled analysis at neutral/alkaline pH."
         ),
         examples=[7.8, 8.5, 6.0]
+    )
+
+    water_chemistry_json: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional water chemistry JSON (mg/L) using the RO design MCP schema. "
+            "Example: '{\"Na+\": 100, \"Ca2+\": 80, \"Cl-\": 150, \"HCO3-\": 120}'. "
+            "If omitted, a municipal background template is used so PHREEQC has "
+            "realistic counter-ions for charge balance."
+        )
     )
 
     @field_validator('outlet_concentration_mg_L')
@@ -531,3 +542,4 @@ class Tier1Outcome:
     henry_constant: float  # Resolved from defaults or override
     molecular_weight: float  # Application-specific MW
     gas_phase_name: str  # PHREEQC phase name for equilibrium_stage()
+    water_chemistry: Optional[WaterChemistryData] = None
