@@ -24,10 +24,15 @@ Air stripping tower design tool implementing Perry's Handbook correlations with 
 - pH-coupled speciation with water chemistry integration
 - Execution time: 10-30 seconds
 
-### Tier 3: Economic Optimization (Not Started)
-- Planned: WaterTAP integration for costing
-- Tower CAPEX, packing costs, utilities OPEX
-- Levelized cost optimization
+### Tier 3: WaterTAP Economic Costing (Complete ✅)
+- Validated cost correlations from upstream libraries
+  - **Blower**: QSDsan (`qsdsan.equipments._aeration.Blower`)
+  - **Vessel**: WaterTAP (`watertap.costing.unit_models.cstr`)
+  - **Packing & Internals**: Industry standard values
+- Economic metrics: NPV, LCOW, payback period
+- CEPCI cost escalation to 2025
+- Full provenance documentation
+- Execution time: <5 seconds
 
 ## Technical Overview
 
@@ -197,9 +202,9 @@ result = await mcp__degasser_design_mcp__heuristic_sizing(
 )
 ```
 
-#### 2. `combined_simulation_mcp` - Tier 1 + Optional Tier 2
+#### 2. `combined_simulation_mcp` - Tier 1 + Optional Tier 2 + Optional Tier 3
 
-Run fast heuristic sizing (Tier 1) and optionally continue with rigorous PHREEQC simulation (Tier 2).
+Run fast heuristic sizing (Tier 1), optionally continue with rigorous PHREEQC simulation (Tier 2), and optionally calculate economic costing (Tier 3).
 
 **Input Parameters:**
 ```python
@@ -213,11 +218,13 @@ Run fast heuristic sizing (Tier 1) and optionally continue with rigorous PHREEQC
   "water_ph": 6.0,
   "run_tier2": true,                    # Set to true for Tier 2 simulation
   "num_stages_initial": 20,             # Fixed stage count (or None for auto-find)
-  "find_optimal_stages": false          # If true, uses bisection to find optimal N
+  "find_optimal_stages": false,         # If true, uses bisection to find optimal N
+  "run_tier3": true,                    # Set to true for economic costing
+  "packing_type": "plastic_pall"        # Packing material: plastic_pall, ceramic_raschig, etc.
 }
 ```
 
-**Output (with Tier 2):**
+**Output (with Tier 2 and Tier 3):**
 ```python
 {
   "request": {...},                      # Echo of input parameters
@@ -242,6 +249,35 @@ Run fast heuristic sizing (Tier 1) and optionally continue with rigorous PHREEQC
         "error_fraction": 0.073,         # 7.3% error
         "passed": "True"
       }
+    }
+  },
+  "tier3": {
+    "capital_costs": {
+      "air_blower_system": 150000,
+      "packed_tower_shell": 13909,
+      "packing_media": 934,
+      "tower_internals": 1396
+    },
+    "operating_costs": {
+      "blower_electricity": 261,         # USD/year
+      "packing_replacement": 47          # USD/year
+    },
+    "total_capex": 166238,               # Total capital expenditure
+    "total_annual_opex": 307,            # Total annual operating cost
+    "economic_metrics": {
+      "npv_usd": -169313,                # Net present value (30 years)
+      "lcow_usd_per_m3": 0.086,          # Levelized cost of water
+      "lcow_usd_per_1000gal": 0.325,     # Levelized cost per 1000 gallons
+      "payback_years": 541,              # Simple payback period
+      "annualized_total_cost_usd_per_year": 16920,
+      "capital_recovery_factor": 0.0999,
+      "annual_water_production_m3": 197100
+    },
+    "cost_breakdown_pct": {
+      "air_blower_system": 90.2,         # Blower dominates CAPEX
+      "packed_tower_shell": 8.4,
+      "packing_media": 0.6,
+      "tower_internals": 0.8
     }
   }
 }
@@ -378,8 +414,20 @@ Motor sizing includes 92% motor efficiency. Vendor data should be used for final
 - H2S: 7.3% mass balance error (acceptable for engineering design)
 - Convergence stable up to 50 stages with 200 iteration limit
 
-### Tier 3: Economic Optimization (Not Implemented)
-**Planned**: CAPEX/OPEX optimization via WaterTAP integration
+### Tier 3: Economic Costing (Complete ✅)
+**Use for**: Cost estimation, packing comparison, economic optimization
+**Features**:
+- Equipment CAPEX: Blower system, tower shell, packing, internals
+- Annual OPEX: Electricity, packing replacement
+- Economic metrics: NPV, LCOW, payback period
+- Validated cost correlations with full provenance
+- CEPCI cost escalation to 2025 USD
+
+**Cost Correlations**:
+- Blower: QSDsan (`qsdsan.equipments._aeration.Blower`) - three-tier sizing
+- Vessel: WaterTAP (`watertap.costing.unit_models.cstr.cost_cstr`)
+- Packing: Industry standard values with CEPCI escalation
+- Internals: Distributors, demisters, support grids
 
 ---
 
@@ -423,7 +471,7 @@ Motor sizing includes 92% motor efficiency. Vendor data should be used for final
 **Three-Tier Design**:
 1. **Tier 1**: Perry's correlations with PHREEQC speciation (Complete ✅)
 2. **Tier 2**: Equilibrium stage simulation (Complete ✅)
-3. **Tier 3**: Economic optimization via WaterTAP (Planned)
+3. **Tier 3**: WaterTAP economic costing (Complete ✅)
 
 ### Directory Structure
 
@@ -439,6 +487,8 @@ degasser-design-mcp/
 ├── tools/                       # MCP tool implementations
 │   ├── __init__.py              # ✓
 │   ├── heuristic_sizing.py      # Tier 1 heuristic sizing ✓
+│   ├── simulation_sizing.py     # Tier 2 PHREEQC staged simulation ✓
+│   ├── watertap_costing.py      # Tier 3 WaterTAP economic costing ✓
 │   └── schemas.py               # Pydantic validation models ✓
 ├── utils/                       # Utility modules
 │   ├── __init__.py              # ✓
@@ -449,6 +499,10 @@ degasser-design-mcp/
 │   ├── helpers.py               # Eckert GPDC, HTU/NTU methods ✓
 │   ├── pressure_drop.py         # Robbins correlation & accessory ΔP ✓
 │   ├── blower_sizing.py         # Power calculations (fluids.compressible) ✓
+│   ├── water_chemistry.py       # RO MCP-compatible water chemistry ✓
+│   ├── economic_defaults.py     # CEPCI escalation, QSDsan imports ✓
+│   ├── costing_parameters.py    # WaterTAP parameter blocks ✓
+│   ├── degasser_costing_methods.py  # Equipment costing methods ✓
 │   └── import_helpers.py        # Dependency detection ✓
 ├── databases/                   # Design databases
 │   ├── pack.json                # Packing specifications ✓
@@ -488,10 +542,18 @@ Note: At pH 6.0, 10.4% of sulfide remains as non-strippable HS⁻. Lower pH to 5
 
 ## References
 
+### Design Correlations
 1. Perry's Chemical Engineers' Handbook, 8th Edition, Section 14
 2. PHREEQC Version 3 (Parkhurst & Appelo, 2013), USGS
 3. fluids library (CalebBell/fluids) for thermodynamics and pressure drop
 4. Robbins, L.A. (1991), Chemical Engineering Progress, 87(5), 87-91
+
+### Economic Costing
+5. QSDsan v1.4.2+ - Blower equipment costing - https://github.com/QSD-Group/QSDsan
+6. WaterTAP v0.15.0+ - Vessel costing framework - https://github.com/watertap-org/watertap
+7. BioSTEAM v2.x - CEPCI cost escalation indices - https://github.com/BioSTEAMDevelopmentGroup/biosteam
+
+For complete cost provenance documentation, see COSTING_REFERENCES.md
 
 ## License
 
