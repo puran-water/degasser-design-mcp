@@ -1,0 +1,44 @@
+# Degasser Design MCP Server Dependencies
+
+# MCP Framework
+fastmcp>=0.1.0
+
+# PHREEQC Integration (Tier 2)
+phreeqpython>=1.5.2
+
+# Scientific Computing
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Data Validation
+pydantic>=2.0.0
+
+# WaterTAP Integration (Tier 3)
+watertap>=0.11.0
+pyomo>=6.7.0
+idaes-pse>=2.2.0
+
+# Thermophysical Properties
+CoolProp>=6.4.0  # Open-source thermophysical properties
+
+# Mass Transfer Correlations
+fluids>=1.0.0  # Dimensionless numbers, mass transfer
+
+# Plotting and Reports
+matplotlib>=3.7.0
+jinja2>=3.1.0  # HTML template engine
+
+# Database Management
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.0.0
+
+# Development Tools
+black>=23.0.0
+isort>=5.12.0
+flake8>=6.0.0
+mypy>=1.0.0

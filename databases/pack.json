@@ -1,0 +1,101 @@
+{
+  "Metal_Pall_Rings_25mm": {
+    "name": "Metal Pall Rings",
+    "nominal_size_mm": 25,
+    "nominal_size_in": 1.0,
+    "material": "Metal",
+    "packing_factor_m_inv": 220,
+    "surface_area_m2_m3": 220,
+    "void_fraction": 0.75,
+    "bed_density_kg_m3": 620,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Metal_Pall_Rings_38mm": {
+    "name": "Metal Pall Rings",
+    "nominal_size_mm": 38,
+    "nominal_size_in": 1.5,
+    "material": "Metal",
+    "packing_factor_m_inv": 164,
+    "surface_area_m2_m3": 164,
+    "void_fraction": 0.78,
+    "bed_density_kg_m3": 540,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Metal_Pall_Rings_50mm": {
+    "name": "Metal Pall Rings",
+    "nominal_size_mm": 50,
+    "nominal_size_in": 2.0,
+    "material": "Metal",
+    "packing_factor_m_inv": 121,
+    "surface_area_m2_m3": 121,
+    "void_fraction": 0.78,
+    "bed_density_kg_m3": 550,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Ceramic_Intalox_Saddles_25mm": {
+    "name": "Ceramic Intalox Saddles",
+    "nominal_size_mm": 25,
+    "nominal_size_in": 1.0,
+    "material": "Ceramic",
+    "packing_factor_m_inv": 256,
+    "surface_area_m2_m3": 302,
+    "void_fraction": 0.73,
+    "bed_density_kg_m3": 672,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Ceramic_Intalox_Saddles_50mm": {
+    "name": "Ceramic Intalox Saddles",
+    "nominal_size_mm": 50,
+    "nominal_size_in": 2.0,
+    "material": "Ceramic",
+    "packing_factor_m_inv": 118,
+    "surface_area_m2_m3": 131,
+    "void_fraction": 0.76,
+    "bed_density_kg_m3": 608,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Plastic_Pall_Rings_25mm": {
+    "name": "Plastic Pall Rings",
+    "nominal_size_mm": 25,
+    "nominal_size_in": 1.0,
+    "material": "Plastic",
+    "packing_factor_m_inv": 180,
+    "surface_area_m2_m3": 206,
+    "void_fraction": 0.90,
+    "bed_density_kg_m3": 71,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Plastic_Pall_Rings_50mm": {
+    "name": "Plastic Pall Rings",
+    "nominal_size_mm": 50,
+    "nominal_size_in": 2.0,
+    "material": "Plastic",
+    "packing_factor_m_inv": 85,
+    "surface_area_m2_m3": 102,
+    "void_fraction": 0.92,
+    "bed_density_kg_m3": 60,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Ceramic_Raschig_Rings_25mm": {
+    "name": "Ceramic Raschig Rings",
+    "nominal_size_mm": 25,
+    "nominal_size_in": 1.0,
+    "material": "Ceramic",
+    "packing_factor_m_inv": 190,
+    "surface_area_m2_m3": 587,
+    "void_fraction": 0.74,
+    "bed_density_kg_m3": 670,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  },
+  "Ceramic_Raschig_Rings_50mm": {
+    "name": "Ceramic Raschig Rings",
+    "nominal_size_mm": 50,
+    "nominal_size_in": 2.0,
+    "material": "Ceramic",
+    "packing_factor_m_inv": 92,
+    "surface_area_m2_m3": 213,
+    "void_fraction": 0.74,
+    "bed_density_kg_m3": 660,
+    "source": "Perry's Handbook 8th Ed, Table 14-13"
+  }
+}

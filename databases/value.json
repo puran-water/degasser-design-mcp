@@ -1,0 +1,21 @@
+{"TCE": {
+     "Contamenat ": "Trichloroethylene (TCE) ",
+     "Chemical formula ": "C2HCl3",
+     "Molculer weight (g\/mol)": 131.4,
+     "Aatomic Volume": 107.1,
+     "delta_H": 3410,
+     "K": 8.59,
+     "Boilling temp.": "87.2°C",
+     "Diffusion volume": 93.48
+    },
+    "CCL4":{
+     "Contamenat ": "Carbon Tetrachloride(CCl4)",
+     "Chemical formula ": "CCl4",
+     "Molculer weight (g\/mol)": 153.823,
+     "Aatomic Volume": 113.2,
+     "delta_H": 4050,
+     "K": 10.06,
+     "Boilling temp.": "76.7 °C",
+     "Diffusion volume": 94.5
+    }
+    }

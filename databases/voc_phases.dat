@@ -1,0 +1,59 @@
+# PHREEQC database definitions for VOC stripping
+# Generated from unified VOC properties database
+#
+# Henry's law: Cgas = H * Caq (dimensionless form)
+# PHREEQC equilibrium: aq_species = gas_phase, K = P_gas / activity_aq
+# For dimensionless H: K = H * R * T (where R = 0.08206 L·atm/(mol·K))
+# -log_k = log10(K)
+#
+# Temperature dependence (van't Hoff):
+# PHREEQC -analytic: log10(K) = A + B/T + C*log10(T) + D*T + E/T^2
+# For van't Hoff: B = -ΔH/(2.303*R), A = log10(K_ref) - B/T_ref
+#
+# Sources: value.json, henrys_law.db, NIST WebBook
+# Reference: phreeqc.dat CO2(g) format
+#
+# Following PHREEQC standard database structure:
+# ELEMENTS → SOLUTION_MASTER_SPECIES → SOLUTION_SPECIES → PHASES
+#
+# NOTE: This file is meant to be appended to phreeqc.dat BEFORE the END statement
+
+ELEMENTS
+    C2HCl3   131.388    131.388   # Trichloroethylene (TCE)
+    CCl4     153.823    153.823   # Carbon tetrachloride
+
+SOLUTION_MASTER_SPECIES
+    C2HCl3   C2HCl3   0   131.388   131.388
+    CCl4     CCl4     0   153.823   153.823
+
+SOLUTION_SPECIES
+
+  # Trichloroethylene (TCE) - neutral aqueous species
+  C2HCl3 = C2HCl3
+  log_k 0.0
+  -gamma 1.0 0.0  # Neutral organic molecule
+  # MW: 131.388 g/mol, CAS: 79-01-6
+
+  # Carbon tetrachloride - neutral aqueous species
+  CCl4 = CCl4
+  log_k 0.0
+  -gamma 1.0 0.0  # Neutral organic molecule
+  # MW: 153.823 g/mol, CAS: 56-23-5
+
+PHASES
+
+  TCE(g)
+  C2HCl3 = C2HCl3
+  -log_k -2.322559  # From H = 8.59 (dimensionless) at 25°C
+  -analytic -1.725228 -178.094464 0 0 0
+  # ΔH = 3410 J/mol for temperature correction
+  # Van't Hoff: log10(K) = -1.725228 + -178.094464/T
+  # CAS: 79-01-6
+
+  CCL4(g)
+  CCl4 = CCl4
+  -log_k -2.391164  # From H = 10.06 (dimensionless) at 25°C
+  -analytic -1.681723 -211.519818 0 0 0
+  # ΔH = 4050 J/mol for temperature correction
+  # Van't Hoff: log10(K) = -1.681723 + -211.519818/T
+  # CAS: 56-23-5

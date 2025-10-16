@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "degasser-design-mcp": {
+      "type": "stdio",
+      "command": "/mnt/c/Users/hvksh/mcp-servers/venv312/Scripts/python.exe",
+      "args": [
+        "C:\\Users\\hvksh\\mcp-servers\\degasser-design-mcp\\server.py"
+      ],
+      "env": {
+        "MCP_TIMEOUT": "600000",
+        "MCP_TOOL_TIMEOUT": "600",
+        "DEGASSER_MCP_ROOT": "C:\\Users\\hvksh\\mcp-servers\\degasser-design-mcp",
+        "PHREEQC_EXE": "phreeqc",
+        "MCP_SIMULATION_TIMEOUT_S": "600"
+      }
+    },
+    "misc-process-kb": {
+      "command": "/home/hvksh/knowledgebase/.venv/bin/python",
+      "args": [
+        "/home/hvksh/knowledgebase/server.py",
+        "stdio"
+      ],
+      "env": {
+        "OLLAMA_MODEL": "snowflake-arctic-embed:xs",
+        "QDRANT_URL": "http://localhost:6333",
+        "NOMIC_KB_SCOPES": "{\"misc_process_kb\":{\"collection\":\"misc_process_kb\",\"title\":\"Miscellaneous Process KB\"}}",
+        "FTS_DB_PATH": "/home/hvksh/knowledgebase/data/misc_process_kb_fts.db",
+        "OLLAMA_URL": "http://localhost:11434",
+        "TEI_RERANK_URL": "http://localhost:8087"
+      },
+      "autoApprove": [
+        "search_misc_process_kb"
+      ]
+    }
+  }
+}

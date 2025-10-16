@@ -1,0 +1,30 @@
+# PHREEQC database with VOC gas phases
+INCLUDE$ C:\Users\hvksh\mcp-servers\venv312\Lib\site-packages\phreeqpython\database\phreeqc.dat
+
+ELEMENTS
+    C2HCl3   131.388  131.388
+    CCl4     153.823  153.823
+
+SOLUTION_MASTER_SPECIES
+    C2HCl3   C2HCl3   0   131.388   131.388
+    CCl4     CCl4     0   153.823   153.823
+
+SOLUTION_SPECIES
+    C2HCl3 = C2HCl3
+        log_k     0.0
+        -gamma    1.0    0.0
+
+    CCl4 = CCl4
+        log_k     0.0
+        -gamma    1.0    0.0
+
+PHASES
+    TCE(g)
+        C2HCl3 = C2HCl3
+        -log_k   -2.322559
+        -analytic -1.725228  -178.094464  0  0  0
+
+    CCl4(g)
+        CCl4 = CCl4
+        -log_k   -2.391164
+        -analytic -1.681723  -211.519818  0  0  0

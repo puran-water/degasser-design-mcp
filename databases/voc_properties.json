@@ -1,0 +1,34 @@
+{
+  "79-01-6": {
+    "name": "Trichloroethylene (TCE)",
+    "common_names": [
+      "TCE"
+    ],
+    "formula": "C2HCl3",
+    "molecular_weight": 131.4,
+    "henry_constant_25C": 8.59,
+    "henry_enthalpy": 3410,
+    "boiling_point_c": 87.2,
+    "diffusion_volume": 93.48,
+    "atomic_volume": 107.1,
+    "sources": [
+      "value.json"
+    ]
+  },
+  "56-23-5": {
+    "name": "Carbon Tetrachloride(CCl4)",
+    "common_names": [
+      "CCL4"
+    ],
+    "formula": "CCl4",
+    "molecular_weight": 153.823,
+    "henry_constant_25C": 10.06,
+    "henry_enthalpy": 4050,
+    "boiling_point_c": 76.7,
+    "diffusion_volume": 94.5,
+    "atomic_volume": 113.2,
+    "sources": [
+      "value.json"
+    ]
+  }
+}
