@@ -19,6 +19,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
+from utils.water_chemistry import build_phreeqc_solution, get_default_water_chemistry
 
 # PHREEQC integration
 try:
@@ -32,6 +33,18 @@ from utils.speciation import strippable_fraction as calculate_strippable_fractio
 from tools.schemas import Tier1Outcome
 
 logger = logging.getLogger(__name__)
+
+# Default background water chemistry (municipal template converted to PHREEQC)
+DEFAULT_BACKGROUND_SOLUTION = build_phreeqc_solution(get_default_water_chemistry())
+
+# Mapping from aqueous master species to total component for mass balance
+AQUEOUS_TOTAL_COMPONENT_MAP = {
+    "H2S": "S(-2)",
+    "HS-": "S(-2)",
+    "CO2": "C(4)",
+    "Tce": "Tce",
+    "Ct": "Ct"
+}
 
 
 # ============================================================================
@@ -136,7 +149,9 @@ def equilibrium_stage(
     gas_phase_name: str,
     aqueous_species_name: str,
     molecular_weight: float,
-    air_water_ratio: float = 1.0
+    air_water_ratio: float = 1.0,
+    base_solution: Optional[Dict[str, float]] = None,
+    solution_units: str = "mg/l"
 ) -> Tuple[float, float, float]:
     """
     Calculate equilibrium for a single theoretical stage.
@@ -166,18 +181,17 @@ def equilibrium_stage(
     Memory Management:
         Calls sol.forget() to prevent Solution object accumulation
     """
-    # Convert mg/L to mol/L for PHREEQC
-    # 1 mg = 10^-3 g, so mg/L -> mol/L requires dividing by MW and 1000
-    C_mol_L = C_liq_in_mg_L / molecular_weight / 1000.0
-
-    # Create solution representing liquid entering stage
-    # IMPORTANT: Must specify units='mol/L' otherwise phreeqpython assumes mmol/kg!
-    sol = pp.add_solution({
+    # Build aqueous solution with background ions for charge balance
+    background = base_solution if base_solution else DEFAULT_BACKGROUND_SOLUTION
+    solution_dict = dict(background)  # Copy to avoid mutating cached dict
+    solution_dict.update({
         'pH': pH_guess,
         'temp': temperature_c,
-        'units': 'mol/L',  # Critical: specify units to avoid 1000x error
-        aqueous_species_name: C_mol_L
+        'units': solution_units
     })
+    solution_dict[aqueous_species_name] = C_liq_in_mg_L
+
+    sol = pp.add_solution(solution_dict)
 
     # Create gas phase representing gas entering from stage above (counter-current)
     # Air stripping uses atmospheric air as carrier gas
@@ -212,15 +226,17 @@ def equilibrium_stage(
         fixed_volume=False      # Volume adjusts to maintain pressure
     )
 
-    logger.debug(f"Gas in: {n_nitrogen:.3f} mol N2, {n_contaminant:.6e} mol VOC, V={gas_volume_L:.1f}L")
+    logger.debug(
+        f"Gas in: {n_nitrogen:.3f} mol carrier, {n_contaminant:.6e} mol contaminant, "
+        f"V={gas_volume_L:.1f} L"
+    )
 
     # Equilibrate: PHREEQC handles speciation + gas-liquid equilibrium
     sol.interact(gas)
 
-    # Extract equilibrium results
-    # sol.total(..., units='mol') returns moles (not mmol)
-    # Multiply by MW to get grams, then by 1000 to convert g -> mg
-    C_out_mol = sol.total(aqueous_species_name, units='mol')
+    # Extract equilibrium results using total component balance
+    total_component = AQUEOUS_TOTAL_COMPONENT_MAP.get(aqueous_species_name, aqueous_species_name)
+    C_out_mol = sol.total(total_component, units='mol') or 0.0
     C_out_mg_L = C_out_mol * molecular_weight * 1000.0
 
     # Extract gas composition after equilibration
@@ -426,6 +442,17 @@ def solve_counter_current_stages(
     }
     aqueous_species_name = aqueous_species_map.get(gas_phase_name, "Tce")
 
+    # Retrieve background water chemistry for PHREEQC solution definition
+    if getattr(outcome, "water_chemistry", None):
+        base_solution_components = outcome.water_chemistry.phreeqc_solution_mg_l
+        logger.debug(
+            "Using user-provided water chemistry (charge imbalance %.2f%%).",
+            outcome.water_chemistry.charge_balance_percent
+        )
+    else:
+        base_solution_components = DEFAULT_BACKGROUND_SOLUTION
+        logger.debug("No water chemistry in outcome; using default municipal background.")
+
     converged = False
     iteration = 0
 
@@ -470,7 +497,9 @@ def solve_counter_current_stages(
             C_eq, y_eq, pH_eq = equilibrium_stage(
                 pp, C_in, y_in, pH[i],
                 temperature, gas_phase_name, aqueous_species_name, MW,
-                air_water_ratio=air_water_ratio  # Use full A/W ratio
+                air_water_ratio=air_water_ratio,  # Use full A/W ratio
+                base_solution=base_solution_components,
+                solution_units="mg/l"
             )
 
             # Apply Murphree efficiency for partial equilibrium

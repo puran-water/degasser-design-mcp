@@ -19,6 +19,7 @@ import logging
 from typing import Dict, Any
 
 from .schemas import HeuristicSizingInput, HeuristicSizingResult, Tier1Outcome
+from utils.water_chemistry import WaterChemistryData, prepare_water_chemistry
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ async def heuristic_sizing(
     packing_id: str = None,
     henry_constant_25C: float = None,
     water_ph: float = None,
+    water_chemistry_json: str = None,
     include_blower_sizing: bool = True,
     blower_efficiency_override: float = None,
     motor_efficiency: float = 0.92
@@ -78,6 +80,9 @@ async def heuristic_sizing(
         packing_id: Packing from catalog (default: application-specific)
         henry_constant_25C: Henry's constant override (default: from application)
         water_ph: Water pH for speciation (H2S/CO2 only, default: None)
+        water_chemistry_json: Optional water chemistry JSON string compatible with
+            the RO design MCP (ion concentrations in mg/L). Provides PHREEQC with
+            realistic counter-ions. Defaults to municipal template if omitted.
         include_blower_sizing: Include blower specs in output (default: True)
         blower_efficiency_override: Override default blower efficiency (default: None)
         motor_efficiency: Electric motor efficiency, 0-1 (default: 0.92)
@@ -109,8 +114,26 @@ async def heuristic_sizing(
         temperature_c=temperature_c,
         packing_id=packing_id,
         henry_constant_25C=henry_constant_25C,
-        water_ph=water_ph
+        water_ph=water_ph,
+        water_chemistry_json=water_chemistry_json
     )
+
+    # Parse/prepare water chemistry (default municipal background when absent)
+    water_chemistry_data: WaterChemistryData = prepare_water_chemistry(
+        input_data.water_chemistry_json
+    )
+
+    if water_chemistry_data.source != "user":
+        logger.info(
+            "Tier 1 using %s background ions (charge imbalance %.2f%%).",
+            water_chemistry_data.source,
+            water_chemistry_data.charge_balance_percent,
+        )
+    else:
+        logger.info(
+            "Water chemistry provided with charge imbalance %.2f%%.",
+            water_chemistry_data.charge_balance_percent
+        )
 
     # Resolve Henry's constant
     henry_constant = input_data.henry_constant_25C
@@ -393,7 +416,8 @@ async def heuristic_sizing(
             result=result,
             henry_constant=henry_constant,
             molecular_weight=molecular_weight,
-            gas_phase_name=gas_phase_name
+            gas_phase_name=gas_phase_name,
+            water_chemistry=water_chemistry_data
         )
 
         return outcome
