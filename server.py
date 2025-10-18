@@ -182,7 +182,7 @@ async def combined_simulation_mcp(
         return {
             "status": "cli_instruction",
             "message": "Execute the following command to run Tier 3 economic costing",
-            "command": f"/mnt/c/Users/hvksh/mcp-servers/venv312/Scripts/python.exe /mnt/c/Users/hvksh/mcp-servers/degasser-design-mcp/cli_runner.py tier3 --params '{params_json}'",
+            "command": f"/mnt/c/Users/hvksh/mcp-servers/venv312/Scripts/python.exe cli_runner.py tier3 --params '{params_json}'",
             "note": "Run this command directly with Bash tool to avoid MCP transport blocking. The calculation will complete in ~30 seconds and return JSON with tier1 and tier3 results.",
             "reason": "MCP STDIO transport has client-side timeouts that cause 'unknown message ID' errors for operations >30 seconds. Running via subprocess bypasses this limitation."
         }
