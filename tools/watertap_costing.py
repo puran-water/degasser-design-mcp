@@ -16,35 +16,40 @@ Author: Claude AI
 import logging
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
-from pyomo.environ import ConcreteModel, Block, units as pyunits
-from idaes.core.base.costing_base import register_idaes_currency_units
 
 # Import parameter block builders
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from utils.costing_parameters import (
-    build_air_blower_cost_param_block,
-    build_packed_tower_shell_cost_param_block,
-    build_packing_media_cost_param_block,
-    build_tower_internals_cost_param_block
-)
-
-# Import costing methods
-from utils.degasser_costing_methods import (
-    cost_air_blower,
-    cost_packed_tower_shell,
-    cost_packing_media,
-    cost_tower_internals
-)
-
-from utils.economic_defaults import get_default_economic_params
-
-# Register IDAES currency units
-register_idaes_currency_units()
+# LAZY IMPORTS: Defer heavy Pyomo/IDAES imports until functions are called
+# This reduces MCP server startup time from 30s -> <5s
+_PYOMO_LOADED = False
+_IDAES_LOADED = False
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_pyomo_loaded():
+    """Lazy-load Pyomo and IDAES libraries only when needed."""
+    global _PYOMO_LOADED, _IDAES_LOADED, ConcreteModel, Block, pyunits, register_idaes_currency_units
+
+    if not _PYOMO_LOADED:
+        logger.debug("Loading Pyomo libraries (lazy import)...")
+        from pyomo.environ import ConcreteModel as _ConcreteModel, Block as _Block, units as _pyunits
+        ConcreteModel = _ConcreteModel
+        Block = _Block
+        pyunits = _pyunits
+        _PYOMO_LOADED = True
+
+    if not _IDAES_LOADED:
+        logger.debug("Loading IDAES libraries (lazy import)...")
+        from idaes.core.base.costing_base import register_idaes_currency_units as _register
+        register_idaes_currency_units = _register
+        register_idaes_currency_units()
+        _IDAES_LOADED = True
+
+    return ConcreteModel, Block, pyunits
 
 
 @dataclass
@@ -78,6 +83,17 @@ class MockCostingPackage:
     but for MCP tool use we create a lightweight mock with parameter blocks.
     """
     def __init__(self):
+        # Ensure Pyomo is loaded
+        ConcreteModel, Block, _ = _ensure_pyomo_loaded()
+
+        # Lazy import parameter block builders
+        from utils.costing_parameters import (
+            build_air_blower_cost_param_block,
+            build_packed_tower_shell_cost_param_block,
+            build_packing_media_cost_param_block,
+            build_tower_internals_cost_param_block
+        )
+
         # Create model for parameter construction
         m = ConcreteModel()
 
@@ -206,6 +222,18 @@ def cost_degasser_system(
         >>> print(f"LCOW: ${costing['economic_metrics']['lcow_usd_per_m3']:.3f}/m³")
     """
 
+    # Lazy import heavy dependencies only when costing is actually called
+    ConcreteModel, Block, _ = _ensure_pyomo_loaded()
+
+    from utils.degasser_costing_methods import (
+        cost_air_blower,
+        cost_packed_tower_shell,
+        cost_packing_media,
+        cost_tower_internals
+    )
+
+    from utils.economic_defaults import get_default_economic_params
+
     # Get economic parameters
     if economic_params is None:
         economic_params = get_default_economic_params(application)
@@ -295,7 +323,7 @@ def cost_degasser_system(
 
     # Extract costs
     capital_costs = {
-        "air_blower_system": m.fs.blower.costing.capital_cost.value,
+        "air_blower_system": m.fs.blower.costing.capital_cost(),
         "packed_tower_shell": m.fs.tower.costing.capital_cost(),
         "packing_media": m.fs.packing.costing.capital_cost(),
         "tower_internals": m.fs.internals.costing.capital_cost()
