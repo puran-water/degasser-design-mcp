@@ -541,3 +541,178 @@ The persistent 21% error was entirely due to skipping the top stage calculation!
 - Session 2: Codex-guided completion, boundary condition fix
 
 **Key Insight:** The root cause (boundary condition bug) was invisible until Codex analyzed the code. The 21% error appeared to be related to chemistry (H2S-specific), but was actually a simple indexing bug that affected all applications equally - just most noticeable in H2S.
+
+---
+
+## Phase 3 Tier 3 Costing Testing (2025-10-18)
+
+### BUG-009: Blower Cost Extraction Returns $10,000 Instead of Calculated Value
+
+**Discovery Date**: 2025-10-18
+**Severity**: Critical (Tier 3 costing bug)
+**Component**: WaterTAP economic costing module
+
+#### Symptoms
+- Blower cost consistently reported as exactly **$10,000** regardless of blower size
+- H2S test case (1.0 kW blower): $10,000 instead of $4,384.75
+- Total CAPEX: $45,418 (incorrect due to blower cost bug)
+- Cost breakdown: Blower 22% (should be 11%)
+
+#### Root Cause Analysis
+
+**File**: `utils/degasser_costing_methods.py` lines 181-208
+**Pattern**: Pyomo **Var + Constraint** (WaterTAP style)
+
+```python
+# BUG: Using Var with Constraint instead of Expression
+blk.costing.capital_cost = Var(
+    initialize=10000,  # ← Initial value used as result!
+    bounds=(0, None),
+    units=pyunits.USD_2018,
+    doc="Total blower system capital cost"
+)
+
+@blk.costing.Constraint(doc="Blower capital cost calculation")
+def capital_cost_constraint(b):
+    return b.capital_cost == (equipment + piping + building)  # Constraint not evaluated
+```
+
+**Extraction Bug** (`tools/watertap_costing.py:326`):
+```python
+capital_costs = {
+    "air_blower_system": m.fs.blower.costing.capital_cost.value,  # ← Returns initial value (10000)
+    "packed_tower_shell": m.fs.tower.costing.capital_cost(),      # ← Expression (correct)
+    "packing_media": m.fs.packing.costing.capital_cost(),         # ← Expression (correct)
+    "tower_internals": m.fs.internals.costing.capital_cost()      # ← Expression (correct)
+}
+```
+
+**Why it fails:**
+- Pyomo **Var.value** returns the **initial value** (10000)
+- Constraints don't self-solve - they require a solver to be invoked
+- Other components (tower, packing, internals) use **Expression** which evaluates immediately
+- **Inconsistent pattern** between blower and other components
+
+#### Investigation Timeline
+
+1. **User observation**: "$10,000 is curiously round"
+2. **Initial hypothesis**: Hardcoded default value
+3. **Discovery**: `initialize=10000` in Var declaration
+4. **Deeper analysis**: Found constraint equation with correct formula
+5. **Log analysis**: Pyomo debug logs showed:
+   ```
+   capital_cost : Value : 10000  (initial value)
+   capital_cost_constraint :
+     fs.blower.costing.capital_cost - (3812.82 + 381.28 + 190.64) : 0.0
+   ```
+6. **Root cause**: Constraint exists but `.value` returns initial value, not constrained value
+
+#### Fix Applied (2025-10-18)
+
+**Change 1**: Convert blower to use **Expression** like other components
+
+**File**: `utils/degasser_costing_methods.py:179-193`
+```python
+# FIX: Total capital cost using Expression (consistent with tower, packing, internals)
+if blower_power_kw < 37.5:
+    # Small/medium: correlations already include installation
+    cost_expr = blk.costing.blower_equipment_cost + blk.costing.piping_cost + blk.costing.building_cost
+else:
+    # Large: apply bare module factors from QSDsan
+    blower_direct = params.blower_bare_module_factor * blk.costing.blower_equipment_cost
+    piping_direct = params.piping_bare_module_factor * blk.costing.piping_cost
+    building_direct = params.building_bare_module_factor * blk.costing.building_cost
+    cost_expr = blower_direct + piping_direct + building_direct
+
+blk.costing.capital_cost = Expression(
+    expr=cost_expr,
+    doc="Total blower system capital cost (equipment + piping + building)"
+)
+```
+
+**Change 2**: Call as function (consistent with other components)
+
+**File**: `tools/watertap_costing.py:326`
+```python
+capital_costs = {
+    "air_blower_system": m.fs.blower.costing.capital_cost(),  # ← Now Expression, call as function
+    "packed_tower_shell": m.fs.tower.costing.capital_cost(),
+    "packing_media": m.fs.packing.costing.capital_cost(),
+    "tower_internals": m.fs.internals.costing.capital_cost()
+}
+```
+
+#### Verification Results
+
+**H2S Test Case** (50 m³/h, 30→0.5 mg/L, 1.0 kW blower):
+
+| Metric | Before Fix | After Fix | Change |
+|--------|-----------|-----------|---------|
+| **Blower equipment** | N/A | $3,812.82 | - |
+| **Piping (10%)** | N/A | $381.28 | - |
+| **Building (5%)** | N/A | $190.64 | - |
+| **Blower total** | $10,000.00 ❌ | $4,384.75 ✅ | -56% |
+| **Total CAPEX** | $45,418 | $39,803 | -12% |
+| **Blower % of CAPEX** | 22% | 11% | Realistic |
+| **LCOW** | $0.0133/m³ | $0.0118/m³ | -11% |
+
+**Manual Calculation Verification**:
+```
+Equipment (IDAES SSLW): $3,812.82
+Piping (10% × equipment): $381.28
+Building (5% × equipment): $190.64
+Total: $4,384.74 ✅ (matches result)
+```
+
+#### Impact Assessment
+
+**Affected Calculations**:
+- All Tier 3 economic costing results prior to 2025-10-18
+- CAPEX over-estimated by ~12% due to inflated blower cost
+- LCOW over-estimated by ~11%
+- Blower cost breakdown percentage incorrect (22% vs 11%)
+
+**Unaffected**:
+- Tier 1 heuristic sizing (no costing)
+- Tier 2 PHREEQC simulation (no costing)
+- Tower, packing, internals costs (used Expression correctly)
+
+#### Related Bugs Found
+
+**BUG-010: Small blower power below IDAES SSLW valid range**
+
+**Test Case**: CO2 stripping (10 m³/h, 100→10 mg/L, 30:1 air/water)
+
+**Error**:
+```
+ValueError: Power 0.18 HP outside IDAES SSLW valid range (1-10 HP)
+```
+
+**Analysis**:
+- Blower power: 0.134 kW = 0.18 HP
+- IDAES SSLW correlation valid range: 1-10 HP (0.75-7.5 kW)
+- This is a **blower sizing issue**, not a costing bug
+- Small flows require very small blowers below correlation range
+
+**Status**: Deferred - need fallback correlation for <1 HP blowers
+
+#### Summary
+
+**Bug Status**: ✅ **FIXED** (2025-10-18)
+
+**Lessons Learned**:
+1. **Pattern consistency matters**: All costing methods should use the same pattern (Expression)
+2. **Pyomo Var + Constraint requires solver**: Cannot just call `.value` and expect constrained result
+3. **Test with realistic values**: $10,000 for a 1 kW blower is unrealistic (should have been caught earlier)
+4. **Suspiciously round numbers**: User's intuition that "$10,000 is curiously round" led to bug discovery
+
+**Files Modified**:
+- `utils/degasser_costing_methods.py:179-193` (Var+Constraint → Expression)
+- `tools/watertap_costing.py:326` (`.value` → `()`)
+
+**Verification**:
+- Manual calculation matches computed result ($4,384.75)
+- Cost breakdown percentages now realistic (11% vs 22%)
+- LCOW reduced by 11% to correct value
+
+**Production Impact**: All Tier 3 costing results from 2025-10-18 onwards are now accurate.

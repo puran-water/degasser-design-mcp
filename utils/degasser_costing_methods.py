@@ -36,12 +36,17 @@ def cost_air_blower(
     blk,
     air_flow_rate_m3_h=None,
     blower_power_kw=None,
-    costing_package=None
+    costing_package=None,
+    material_factor=1.0
 ):
     """
-    Cost an air blower using Shoener et al. (2016) correlations.
+    Cost an air blower using three-tier hybrid correlation.
 
-    Implements three-tier sizing based on total CFM (cubic feet per minute).
+    Implements intelligent tier selection based on blower size:
+    - Small (< 7.5 kW): IDAES SSLW power-based (accurate for HVAC/small blowers)
+    - Medium (7.5-37.5 kW): WaterTAP-Reflo ASDC flow-based
+    - Large (> 37.5 kW): QSDsan Shoener CFM-based (industrial wastewater)
+
     Follows WaterTAP costing pattern with Var + Constraint for capital cost.
 
     Args:
@@ -49,18 +54,21 @@ def cost_air_blower(
         air_flow_rate_m3_h: Air flow rate in m³/h (Var or float)
         blower_power_kw: Blower power consumption in kW (Var or float)
         costing_package: WaterTAPCostingDetailed instance
+        material_factor: Material construction multiplier (1.0=aluminum, 2.5=SS304, 3.0=SS316)
 
     Returns:
         Sets costing components:
         - blk.costing.capital_cost: Blower CAPEX Var with constraint
         - blk.costing.fixed_operating_cost: Annual electricity Expression
+        - blk.costing.blower_tier: Which correlation was used (for auditing)
 
     Example:
         >>> cost_air_blower(
         ...     blk=my_unit,
-        ...     air_flow_rate_m3_h=5000,
-        ...     blower_power_kw=50,
-        ...     costing_package=m.fs.costing
+        ...     air_flow_rate_m3_h=1500,  # 883 CFM
+        ...     blower_power_kw=0.76,     # 1 HP
+        ...     costing_package=m.fs.costing,
+        ...     material_factor=1.0       # Aluminum
         ... )
     """
     if costing_package is None:
@@ -72,90 +80,119 @@ def cost_air_blower(
     if blower_power_kw is None:
         raise ConfigurationError("blower_power_kw must be provided")
 
+    # Import three-tier correlations
+    from utils.economic_defaults import (
+        cost_small_blower_idaes_sslw,
+        cost_medium_blower_asdc,
+        cost_large_blower_qsdsan
+    )
+
     # Get parameter block
     params = costing_package.air_blower
 
-    # Convert air flow to CFM using Expression (per Codex recommendation)
-    # This keeps everything symbolic without extra Vars
-    blk.costing.air_flow_cfm = Expression(
-        expr=pyunits.convert(
-            air_flow_rate_m3_h * pyunits.m**3 / pyunits.hour,
-            to_units=pyunits.ft**3 / pyunits.min
-        ),
-        doc="Air flow rate in cubic feet per minute"
-    )
+    # Determine which tier to use based on power
+    # Thresholds chosen to avoid discontinuities and match correlation ranges
+    if blower_power_kw < 7.5:  # < 10 HP
+        # Tier 1: Small blowers (IDAES SSLW power-based)
+        # Best for regenerative blowers, HVAC fans, small centrifugal
+        blower_equipment_cost_usd = cost_small_blower_idaes_sslw(
+            blower_power_kw,
+            material_factor=material_factor
+        )
+        tier_used = "small_idaes_sslw"
+        _log.info(f"Using IDAES SSLW correlation (small blower, {blower_power_kw:.2f} kW)")
 
-    # Create dimensionless flow ratio (CFM / 1000)
-    # Following Codex pattern: convert numerator first, then divide by same units
-    blk.costing.flow_ratio_tcfm = Expression(
-        expr=blk.costing.air_flow_cfm / (1000 * pyunits.ft**3 / pyunits.min),
-        doc="Dimensionless flow ratio (TCFM = thousands of CFM)"
-    )
+    elif blower_power_kw < 37.5:  # 10-50 HP
+        # Tier 2: Medium blowers (WaterTAP-Reflo ASDC flow-based)
+        # Best for packaged air stripping systems, mid-scale process blowers
+        blower_equipment_cost_usd = cost_medium_blower_asdc(air_flow_rate_m3_h)
+        tier_used = "medium_asdc"
+        _log.info(f"Using ASDC correlation (medium blower, {air_flow_rate_m3_h:.0f} m³/h)")
 
-    # Blower capital cost using Tier 2 (covers most applications: 883 CFM typical)
-    # QSDsan formula: Cost = base * N_blowers^scale_factor * (CFM/1000)^scale_exp
-    # For single blower: N_blowers = 1, so scale_factor term = 1
+    else:  # > 50 HP
+        # Tier 3: Large industrial blowers (QSDsan Shoener CFM-based)
+        # Best for municipal wastewater, large industrial air systems
+        blower_equipment_cost_usd = cost_large_blower_qsdsan(
+            air_flow_rate_m3_h,
+            n_blowers=1  # Single blower for now, can be parameterized later
+        )
+        tier_used = "large_qsdsan"
+        _log.info(f"Using QSDsan Shoener correlation (large blower, {air_flow_rate_m3_h:.0f} m³/h)")
+
+    # Store tier used for auditing/debugging
+    blk.costing.blower_tier = tier_used
+
+    # Convert to Pyomo units
     blk.costing.blower_equipment_cost = Expression(
-        expr=(
-            params.blower_tier2_base_cost
-            * params.blower_tier2_scale_factor  # For N_blowers = 1
-            * blk.costing.flow_ratio_tcfm ** params.blower_tier2_scale_exp
-        ),
-        doc="Blower equipment cost (Shoener 2016, tier 2)"
+        expr=blower_equipment_cost_usd * pyunits.USD_2018,
+        doc=f"Blower equipment cost ({tier_used})"
     )
 
-    # Air piping cost (Tier 2: 1,000-10,000 CFM)
-    # Formula: coeff * AFF * TCFM^exp, where AFF = air flow fraction (1.5 default)
-    blk.costing.piping_cost = Expression(
-        expr=(
-            params.piping_cost_tier2_coeff
-            * params.air_flow_fraction_AFF
-            * blk.costing.flow_ratio_tcfm ** params.piping_cost_tier2_exp
-        ),
-        doc="Air piping cost (Shoener 2016)"
-    )
+    # Air piping and building costs (scale-appropriate estimations)
+    # For small/medium blowers: simplified estimates
+    # For large blowers: use QSDsan Shoener correlations
 
-    # Blower building cost
-    # Building area = 128 * TCFM^0.256 ft²
-    # Building cost = area * 90 USD/ft² (escalated to 2025)
-    blk.costing.building_area_ft2 = Expression(
-        expr=(
-            params.building_area_coeff
-            * blk.costing.flow_ratio_tcfm ** params.building_area_exp
-        ),
-        doc="Blower building floor area (ft²)"
-    )
-
-    blk.costing.building_cost = Expression(
-        expr=blk.costing.building_area_ft2 * params.building_unit_cost,
-        doc="Blower building construction cost"
-    )
-
-    # Total capital cost using WaterTAP constraint pattern
-    # Capital Var with Constraint (not just Expression)
-    blk.costing.capital_cost = Var(
-        initialize=150000,
-        bounds=(0, None),
-        units=pyunits.USD_2018,
-        doc="Total blower system capital cost"
-    )
-
-    @blk.costing.Constraint(doc="Blower capital cost calculation")
-    def capital_cost_constraint(b):
-        # Sum all components and apply bare module factors
-        blower_direct = params.blower_bare_module_factor * b.blower_equipment_cost
-        piping_direct = params.piping_bare_module_factor * b.piping_cost
-        building_direct = params.building_bare_module_factor * b.building_cost
-
-        # Convert to base currency if needed
-        return b.capital_cost == pyunits.convert(
-            blower_direct + piping_direct + building_direct,
-            to_units=pyunits.USD_2018
+    if blower_power_kw < 37.5:  # Small and medium blowers
+        # Simplified piping: 10% of equipment cost
+        blk.costing.piping_cost = Expression(
+            expr=blower_equipment_cost_usd * 0.10 * pyunits.USD_2018,
+            doc="Air piping cost (simplified for small/medium blowers)"
         )
 
+        # Simplified building: 15% of equipment cost (or none for small HVAC units)
+        if blower_power_kw < 7.5:
+            # Small blowers often wall-mounted, minimal building cost
+            blk.costing.building_cost = Expression(
+                expr=blower_equipment_cost_usd * 0.05 * pyunits.USD_2018,
+                doc="Blower housing/mounting cost (small blower)"
+            )
+        else:
+            blk.costing.building_cost = Expression(
+                expr=blower_equipment_cost_usd * 0.15 * pyunits.USD_2018,
+                doc="Blower building cost (medium blower)"
+            )
+
+    else:  # Large industrial blowers use QSDsan correlations
+        # Convert to CFM for QSDsan formulas
+        cfm = air_flow_rate_m3_h * 35.3147 / 60
+        tcfm = cfm / 1000  # Thousands of CFM
+
+        # QSDsan piping correlation (Tier 2 for typical range)
+        piping_cost_usd = (
+            params.piping_cost_tier2_coeff *
+            params.air_flow_fraction_AFF *
+            (tcfm ** params.piping_cost_tier2_exp)
+        )
+        blk.costing.piping_cost = Expression(
+            expr=piping_cost_usd,
+            doc="Air piping cost (QSDsan Shoener 2016)"
+        )
+
+        # QSDsan building correlation
+        building_area_ft2 = params.building_area_coeff * (tcfm ** params.building_area_exp)
+        building_cost_usd = building_area_ft2 * params.building_unit_cost
+        blk.costing.building_cost = Expression(
+            expr=building_cost_usd,
+            doc="Blower building cost (QSDsan Shoener 2016)"
+        )
+
+    # Total capital cost using Expression (consistent with tower, packing, internals)
+    if blower_power_kw < 37.5:
+        # Small/medium: correlations already include installation
+        cost_expr = blk.costing.blower_equipment_cost + blk.costing.piping_cost + blk.costing.building_cost
+    else:
+        # Large: apply bare module factors from QSDsan
+        blower_direct = params.blower_bare_module_factor * blk.costing.blower_equipment_cost
+        piping_direct = params.piping_bare_module_factor * blk.costing.piping_cost
+        building_direct = params.building_bare_module_factor * blk.costing.building_cost
+        cost_expr = blower_direct + piping_direct + building_direct
+
+    blk.costing.capital_cost = Expression(
+        expr=cost_expr,
+        doc="Total blower system capital cost (equipment + piping + building)"
+    )
+
     # Operating cost: Annual electricity
-    # Following Codex recommendation to use WaterTAP's cost_flow if available
-    # For now, use direct calculation (can upgrade to cost_flow later)
     utilization_factor = 0.9  # 90% uptime
     hours_per_year = 8760
 
@@ -169,7 +206,7 @@ def cost_air_blower(
         doc="Annual blower electricity cost"
     )
 
-    _log.info("Blower costing complete (Shoener 2016): equipment + piping + building")
+    _log.info(f"Blower costing complete ({tier_used}): equipment + piping + building")
 
 
 def cost_packed_tower_shell(
