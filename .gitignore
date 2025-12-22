@@ -31,3 +31,11 @@ tmp/
 
 # OS
 .DS_Store
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Codex/OpenAI credentials
+.codex/
