@@ -14,12 +14,18 @@ Applications:
 Author: Claude AI
 """
 
+import json
 import logging
 import os
 import sys
+import uuid
 import warnings
 from pathlib import Path
 from mcp.server.fastmcp import FastMCP
+
+# Import job management utilities
+from utils.job_manager import JobManager
+from utils.path_utils import get_python_executable
 
 # Configure logging - CRITICAL: Use INFO level and stderr-only to prevent stdout pollution
 # Pyomo/IDAES DEBUG spam breaks MCP's JSON-RPC transport over stdio
@@ -75,8 +81,27 @@ from tools.watertap_costing import cost_degasser_system_async
 # from tools.batch_optimization import batch_optimize_degasser
 
 # Create wrapper for heuristic_sizing that returns dict for MCP
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pydantic import BaseModel
+
+
+def convert_to_dict(obj):
+    """Recursively convert dataclasses and Pydantic models to dicts."""
+    if isinstance(obj, BaseModel):
+        return obj.model_dump()
+    elif hasattr(obj, '__dataclass_fields__'):
+        result = {}
+        for field in fields(obj):
+            value = getattr(obj, field.name)
+            result[field.name] = convert_to_dict(value)
+        return result
+    elif isinstance(obj, list):
+        return [convert_to_dict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: convert_to_dict(v) for k, v in obj.items()}
+    else:
+        return obj
+
 
 async def heuristic_sizing_mcp(
     application: str,
@@ -110,7 +135,8 @@ async def heuristic_sizing_mcp(
         motor_efficiency=motor_efficiency
     )
     # Convert Tier1Outcome dataclass to dictionary for MCP serialization
-    return asdict(result)
+    # Note: asdict() doesn't handle nested Pydantic models, so use convert_to_dict
+    return convert_to_dict(result)
 
 # Create combined tool for Tier 1 + optional Tier 2 + optional Tier 3
 async def combined_simulation_mcp(
@@ -139,9 +165,9 @@ async def combined_simulation_mcp(
     Run Tier 1 heuristic sizing, optionally continue with Tier 2 staged
     column simulation, and optionally run Tier 3 economic costing.
 
-    NOTE: Due to MCP STDIO transport timeout limitations with long-running async operations,
-    Tier 3 costing (~30 sec) returns a CLI command string instead of running directly.
-    The client executes this via Bash tool to bypass the MCP protocol timeout.
+    For Tier 2 and Tier 3, this uses the background job pattern to avoid
+    MCP STDIO transport timeout issues. Returns a job_id immediately;
+    use get_job_status() and get_job_results() to monitor and retrieve results.
 
     Args:
         (same as heuristic_sizing plus:)
@@ -152,41 +178,102 @@ async def combined_simulation_mcp(
         packing_type: Packing material for costing (plastic_pall, ceramic_raschig, etc.)
 
     Returns:
-        If run_tier3=True: CLI instruction dict with command to execute via Bash
-        Otherwise: Dict with Tier 1 results, 'tier2' key if run_tier2=True
+        If run_tier2=True or run_tier3=True: Job status dict with job_id for polling
+        Otherwise: Dict with Tier 1 results only
     """
-    # If Tier 3 requested, return CLI instruction to bypass MCP STDIO timeout
-    # (MCP client times out after ~30 sec, but Tier 3 takes 30+ sec due to Pyomo lazy loading)
+    # Build params dict for background jobs
+    params = {
+        "application": application,
+        "water_flow_rate_m3_h": water_flow_rate_m3_h,
+        "inlet_concentration_mg_L": inlet_concentration_mg_L,
+        "outlet_concentration_mg_L": outlet_concentration_mg_L,
+        "air_water_ratio": air_water_ratio,
+        "temperature_c": temperature_c,
+        "packing_id": packing_id,
+        "henry_constant_25C": henry_constant_25C,
+        "water_ph": water_ph,
+        "water_chemistry_json": water_chemistry_json,
+        "include_blower_sizing": include_blower_sizing,
+        "blower_efficiency_override": blower_efficiency_override,
+        "motor_efficiency": motor_efficiency,
+        "num_stages_initial": num_stages_initial,
+        "find_optimal_stages": find_optimal_stages,
+        "packing_type": packing_type
+    }
+    # Remove None values
+    params = {k: v for k, v in params.items() if v is not None}
+
+    # If Tier 3 requested, spawn background job (highest tier takes precedence)
     if run_tier3:
-        import json
-        params = {
-            "application": application,
-            "water_flow_rate_m3_h": water_flow_rate_m3_h,
-            "inlet_concentration_mg_L": inlet_concentration_mg_L,
-            "outlet_concentration_mg_L": outlet_concentration_mg_L,
-            "air_water_ratio": air_water_ratio,
-            "temperature_c": temperature_c,
-            "packing_id": packing_id,
-            "henry_constant_25C": henry_constant_25C,
-            "water_ph": water_ph,
-            "water_chemistry_json": water_chemistry_json,
-            "include_blower_sizing": include_blower_sizing,
-            "blower_efficiency_override": blower_efficiency_override,
-            "motor_efficiency": motor_efficiency,
-            "packing_type": packing_type
+        manager = JobManager()
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = Path("jobs") / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write params to job directory
+        with open(job_dir / "params.json", "w") as f:
+            json.dump(params, f, indent=2)
+
+        # Build command for tier3_cli.py
+        python_exe = get_python_executable()
+        cmd = [python_exe, "utils/tier3_cli.py", "--job-dir", str(job_dir)]
+
+        # Start background job
+        job = await manager.execute(cmd=cmd, cwd=".", job_id=job_id)
+
+        # Register state patch for auto-hydration
+        job["state_patch"] = {
+            "field": "tier3_results",
+            "result_file": "tier3_results.json"
         }
-        # Remove None values to keep command clean
-        params = {k: v for k, v in params.items() if v is not None}
-        params_json = json.dumps(params)
+        manager._save_job_metadata(job)
+
+        logger.info(f"Started Tier 3 background job: {job_id}")
 
         return {
-            "status": "cli_instruction",
-            "message": "Execute the following command to run Tier 3 economic costing",
-            "command": f"/mnt/c/Users/hvksh/mcp-servers/venv312/Scripts/python.exe cli_runner.py tier3 --params '{params_json}'",
-            "note": "Run this command directly with Bash tool to avoid MCP transport blocking. The calculation will complete in ~30 seconds and return JSON with tier1 and tier3 results.",
-            "reason": "MCP STDIO transport has client-side timeouts that cause 'unknown message ID' errors for operations >30 seconds. Running via subprocess bypasses this limitation."
+            "status": "job_started",
+            "job_id": job_id,
+            "tier": "tier3",
+            "message": "Tier 3 economic costing job started. Use get_job_status(job_id) to check progress.",
+            "estimated_time_seconds": 30
         }
-    # Run Tier 1
+
+    # If Tier 2 requested, spawn background job
+    if run_tier2:
+        manager = JobManager()
+        job_id = str(uuid.uuid4())[:8]
+        job_dir = Path("jobs") / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write params to job directory
+        with open(job_dir / "params.json", "w") as f:
+            json.dump(params, f, indent=2)
+
+        # Build command for tier2_cli.py
+        python_exe = get_python_executable()
+        cmd = [python_exe, "utils/tier2_cli.py", "--job-dir", str(job_dir)]
+
+        # Start background job
+        job = await manager.execute(cmd=cmd, cwd=".", job_id=job_id)
+
+        # Register state patch for auto-hydration
+        job["state_patch"] = {
+            "field": "tier2_results",
+            "result_file": "tier2_results.json"
+        }
+        manager._save_job_metadata(job)
+
+        logger.info(f"Started Tier 2 background job: {job_id}")
+
+        return {
+            "status": "job_started",
+            "job_id": job_id,
+            "tier": "tier2",
+            "message": "Tier 2 PHREEQC simulation job started. Use get_job_status(job_id) to check progress.",
+            "estimated_time_seconds": 20
+        }
+
+    # Tier 1 only - run synchronously (fast, <1 sec)
     tier1_outcome = await heuristic_sizing(
         application=application,
         water_flow_rate_m3_h=water_flow_rate_m3_h,
@@ -222,32 +309,7 @@ async def combined_simulation_mcp(
         else:
             return obj
 
-    result = convert_to_dict(tier1_outcome)
-    tier2_result = None
-
-    # Optionally run Tier 2
-    if run_tier2:
-        try:
-            logger.info("Running Tier 2 staged column simulation...")
-            tier2_result = staged_column_simulation(
-                tier1_outcome,
-                num_stages_initial=num_stages_initial,
-                find_optimal_stages=find_optimal_stages,
-                convergence_tolerance=0.01,
-                max_inner_iterations=200,
-                validate_mass_balance_flag=True
-            )
-            result['tier2'] = tier2_result
-            logger.info(f"Tier 2 complete: {tier2_result['theoretical_stages']} stages, "
-                       f"{tier2_result['tower_height_m']:.1f}m height")
-        except Exception as e:
-            logger.error(f"Tier 2 simulation failed: {e}")
-            result['tier2_error'] = str(e)
-
-    # NOTE: Tier 3 execution removed - now handled via CLI runner
-    # See early return at line 160 which provides CLI instruction when run_tier3=True
-
-    return result
+    return convert_to_dict(tier1_outcome)
 
 # Register tools
 # Tool 1: Fast Perry's-based heuristic sizing
@@ -263,6 +325,144 @@ mcp.tool()(combined_simulation_mcp)
 # requires Tier1Outcome dataclass parameter which cannot be serialized via MCP.
 # It remains available for Python API use. For MCP access to Tier 3 costing,
 # use combined_simulation_mcp with run_tier3=True parameter.
+
+
+# =============================================================================
+# Job Management Tools (for background Tier 2 & Tier 3 operations)
+# =============================================================================
+
+async def get_job_status(job_id: str) -> dict:
+    """
+    Get the current status of a background job.
+
+    Use this to poll for job completion after calling combined_simulation_mcp
+    with run_tier2=True or run_tier3=True.
+
+    Args:
+        job_id: Job identifier returned from combined_simulation_mcp
+
+    Returns:
+        Dict with job_id, status (starting/running/completed/failed),
+        elapsed_time_seconds, and progress hints if available.
+    """
+    manager = JobManager()
+    return await manager.get_status(job_id)
+
+
+async def get_job_results(job_id: str) -> dict:
+    """
+    Get results from a completed background job.
+
+    Call this after get_job_status indicates the job has completed.
+
+    Args:
+        job_id: Job identifier returned from combined_simulation_mcp
+
+    Returns:
+        Dict with job_id, status, total_time_seconds, and results
+        (full Tier 1 + Tier 2/3 output).
+    """
+    manager = JobManager()
+    return await manager.get_results(job_id)
+
+
+async def list_jobs(status_filter: str = None, limit: int = 20) -> dict:
+    """
+    List all background jobs with optional status filter.
+
+    Args:
+        status_filter: Filter by status ("running", "completed", "failed", or None for all)
+        limit: Maximum number of jobs to return (default: 20)
+
+    Returns:
+        Dict with jobs list, total count, and concurrency info.
+    """
+    manager = JobManager()
+    return await manager.list_jobs(status_filter, limit)
+
+
+async def terminate_job(job_id: str) -> dict:
+    """
+    Terminate a running background job.
+
+    Args:
+        job_id: Job identifier to terminate
+
+    Returns:
+        Dict with termination status.
+    """
+    manager = JobManager()
+    return await manager.terminate_job(job_id)
+
+
+async def wait_for_job(
+    job_id: str,
+    timeout_seconds: int = 300,
+    poll_interval_seconds: float = 2.0
+) -> dict:
+    """
+    Wait for a background job to complete.
+
+    This is a blocking convenience tool that polls get_job_status until
+    the job completes, fails, or times out. Use this instead of manually
+    calling get_job_status in a loop.
+
+    Args:
+        job_id: Job identifier from combined_simulation_mcp
+        timeout_seconds: Maximum time to wait (default 5 minutes)
+        poll_interval_seconds: How often to check status (default 2 seconds)
+
+    Returns:
+        Dict with job results if completed, or error status if failed/timeout.
+    """
+    import time as time_module
+    import asyncio
+
+    manager = JobManager()
+    start = time_module.time()
+
+    while time_module.time() - start < timeout_seconds:
+        status = await manager.get_status(job_id)
+
+        if status.get("status") == "completed":
+            # Job completed - return full results
+            return await manager.get_results(job_id)
+
+        if status.get("status") == "failed":
+            # Job failed - return error info
+            return {
+                "job_id": job_id,
+                "status": "failed",
+                "error": status.get("error", "Unknown error"),
+                "exit_code": status.get("exit_code")
+            }
+
+        if status.get("status") == "terminated":
+            return {
+                "job_id": job_id,
+                "status": "terminated",
+                "error": "Job was terminated before completion"
+            }
+
+        # Still running - wait and try again
+        await asyncio.sleep(poll_interval_seconds)
+
+    # Timeout reached
+    return {
+        "job_id": job_id,
+        "status": "timeout",
+        "error": f"Job did not complete within {timeout_seconds} seconds",
+        "last_progress": (await manager.get_status(job_id)).get("progress")
+    }
+
+
+# Register job management tools
+mcp.tool()(get_job_status)
+mcp.tool()(get_job_results)
+mcp.tool()(list_jobs)
+mcp.tool()(terminate_job)
+mcp.tool()(wait_for_job)
+
 
 # Tool 4: Professional HTML reports (Phase 4)
 # mcp.tool()(generate_degasser_report)

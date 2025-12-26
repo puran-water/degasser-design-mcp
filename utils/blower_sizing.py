@@ -88,7 +88,7 @@ def select_blower_type(
             logger.warning(f"Invalid blower type override: {user_override}. Using automatic selection.")
 
     # Automatic selection based on compression ratio
-    if compression_ratio <= 1.2:  # ≤ 3 psig
+    if compression_ratio <= 1.2:  # <= 3 psig
         return {
             'blower_type': 'Multistage Centrifugal',
             'thermodynamic_model': 'Isothermal',
@@ -118,7 +118,7 @@ def calculate_isothermal_power(
     """
     Calculate isothermal compression power using fluids library.
 
-    Suitable for compression ratio β ≤ 1.2 (low pressure applications).
+    Suitable for compression ratio beta <= 1.2 (low pressure applications).
 
     Args:
         volumetric_flow_m3_s: Volumetric flow rate at inlet, m³/s
@@ -151,8 +151,8 @@ def calculate_isothermal_power(
     shaft_power_kw = shaft_power_w / 1000.0
 
     logger.debug(
-        f"Isothermal: β={compression_ratio:.3f}, "
-        f"W_shaft={shaft_power_kw:.2f} kW (η={blower_efficiency:.2f})"
+        f"Isothermal: beta={compression_ratio:.3f}, "
+        f"W_shaft={shaft_power_kw:.2f} kW (eta={blower_efficiency:.2f})"
     )
 
     return shaft_power_kw
@@ -168,7 +168,7 @@ def calculate_polytropic_power(
     """
     Calculate polytropic compression power using fluids library.
 
-    Suitable for compression ratio 1.2 < β ≤ 1.5 (medium pressure applications).
+    Suitable for compression ratio 1.2 < beta <= 1.5 (medium pressure applications).
     Derives proper polytropic exponent n from efficiency instead of using γ=1.4.
 
     Args:
@@ -214,8 +214,8 @@ def calculate_polytropic_power(
     discharge_temperature_c = discharge_temperature_k - 273.15
 
     logger.debug(
-        f"Polytropic: β={compression_ratio:.3f}, n={n:.3f} (from η_p={polytropic_efficiency:.2f}), "
-        f"W_shaft={shaft_power_kw:.2f} kW, T2={discharge_temperature_c:.1f}°C"
+        f"Polytropic: beta={compression_ratio:.3f}, n={n:.3f} (from eta_p={polytropic_efficiency:.2f}), "
+        f"W_shaft={shaft_power_kw:.2f} kW, T2={discharge_temperature_c:.1f} C"
     )
 
     return {
@@ -285,10 +285,10 @@ def calculate_adiabatic_power(
     aftercooling_heat_duty_kw = aftercooling_heat_duty_w / 1000.0
 
     logger.debug(
-        f"Adiabatic: β={compression_ratio:.3f}, γ={gamma:.2f}, "
+        f"Adiabatic: beta={compression_ratio:.3f}, gamma={gamma:.2f}, "
         f"W_shaft={shaft_power_kw:.2f} kW, "
         f"T2={T2_actual:.1f} K, Q_cool={aftercooling_heat_duty_kw:.2f} kW "
-        f"(η={isentropic_efficiency:.2f})"
+        f"(eta={isentropic_efficiency:.2f})"
     )
 
     return {
@@ -395,7 +395,7 @@ def calculate_blower_power(
     inlet_pressure_psig = (inlet_pressure_pa - 101325.0) / PSI_TO_PA
 
     logger.info(
-        f"Blower sizing: {blower_type}, β={compression_ratio:.3f}, "
+        f"Blower sizing: {blower_type}, beta={compression_ratio:.3f}, "
         f"P_discharge={discharge_pressure_psig:.2f} psig, "
         f"Motor={motor_power_kw:.2f} kW ({motor_power_hp:.1f} hp)"
     )

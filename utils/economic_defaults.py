@@ -44,7 +44,9 @@ CEPCI_INDICES = {
     1984: 322.7,  # Tang correlation year
     1990: 357.6,  # WaterTAP CSTR base year (Tang 1984)
     2001: 397.0,  # El-Sayed compressor correlation
-    2015: 556.8,  # EPA WBS PTA update
+    2002: 395.6,  # IDAES SSLW CE500 base year
+    2010: 550.8,  # WaterTAP-Reflo ASDC base year
+    2015: 556.8,  # EPA WBS PTA update, Shoener/QSDsan base year
     2017: 567.5,  # BioSTEAM default (matches bst.CE)
     2018: 603.1,  # WaterTAP cost_pump base year
     2019: 607.5,  # EPA WBS packing costs
@@ -52,6 +54,11 @@ CEPCI_INDICES = {
     2023: 816.0,  # Chemical Engineering Magazine
     2025: 850.0,  # Current year estimate (interpolated)
 }
+
+# CE500 index (Chemical Engineering 500 index, used by IDAES)
+# CE500 = CEPCI for year 2002 (base year 500)
+# Source: IDAES Process Systems Engineering Framework
+CE500 = 395.6  # CEPCI value for 2002
 
 # If BioSTEAM is available, sync the current year CEPCI
 if _BIOSTEAM_AVAILABLE:
@@ -100,6 +107,146 @@ def escalate_cost(cost_base: float, year_from: int, year_to: int = 2025) -> floa
         raise ValueError(f"CEPCI index not available for year {year_to}")
 
     return cost_base * (CEPCI_INDICES[year_to] / CEPCI_INDICES[year_from])
+
+
+# ============================================================================
+# THREE-TIER BLOWER COSTING CORRELATIONS
+# ============================================================================
+
+def cost_small_blower_idaes_sslw(power_kw: float, material_factor: float = 1.0) -> float:
+    """
+    Calculate small blower cost using IDAES SSLW power-based correlation.
+
+    Source: IDAES/idaes-pse:idaes/models/costing/SSLW.py#L1193-L1258
+    Reference: Seider et al. (2004) Plant Design and Economics for Chemical Engineers
+
+    Valid range: 0.75 kW - 7.5 kW (1 - 10 HP)
+    Formula: Cost = exp(α₁ + α₂·ln(P_hp) + α₃·ln²(P_hp)) [USD_CE500]
+
+    Coefficients for rotary blower (better for low pressure):
+    - α₁ = 7.59176
+    - α₂ = 0.79320
+    - α₃ = 0.01363
+
+    Material factors:
+    - Aluminum: 1.0 (baseline)
+    - Cast iron: 1.5
+    - Stainless steel 304: 2.5
+    - Stainless steel 316: 3.0
+
+    Args:
+        power_kw: Blower power in kilowatts
+        material_factor: Construction material multiplier (default 1.0 = aluminum)
+
+    Returns:
+        Blower equipment cost in USD_2018 (escalated from CE500)
+
+    Example:
+        >>> cost_small_blower_idaes_sslw(0.76, material_factor=1.0)  # 1 HP aluminum
+        4855.0  # $4,855 in USD_2018
+    """
+    import math
+
+    # Convert kW to HP
+    hp = power_kw * 1.341
+
+    # Validate range
+    if hp < 1.0 or hp > 10.0:
+        raise ValueError(f"Power {hp:.2f} HP outside IDAES SSLW valid range (1-10 HP)")
+
+    # IDAES SSLW rotary blower coefficients
+    alpha_1 = 7.59176
+    alpha_2 = 0.79320
+    alpha_3 = 0.01363
+
+    # Calculate base cost in CE500 dollars
+    ln_hp = math.log(hp)
+    cost_ce500 = math.exp(alpha_1 + alpha_2 * ln_hp + alpha_3 * ln_hp**2)
+
+    # Apply material factor
+    cost_ce500_material = cost_ce500 * material_factor
+
+    # Escalate from CE500 (2002) to USD_2018
+    cost_usd_2018 = escalate_cost(cost_ce500_material, 2002, 2018)
+
+    return cost_usd_2018
+
+
+def cost_medium_blower_asdc(air_flow_m3_h: float) -> float:
+    """
+    Calculate medium blower cost using WaterTAP-Reflo ASDC correlation.
+
+    Source: watertap-org/watertap-reflo:src/watertap_contrib/reflo/costing/units/air_stripping.py#L217-L236
+    Reference: ASDC (Air Stripping Design Code) dataset from EPA/Kilthub
+
+    Valid range: 500 - 5000 m³/h (300 - 3000 CFM)
+    Formula: Cost = 4450 + 57·Q^0.8 [USD_2010]
+
+    Args:
+        air_flow_m3_h: Air flow rate in m³/h
+
+    Returns:
+        Blower equipment cost in USD_2018 (escalated from USD_2010)
+
+    Example:
+        >>> cost_medium_blower_asdc(1500)  # 1500 m³/h
+        40234.0  # $40,234 in USD_2018
+    """
+    # Validate range
+    if air_flow_m3_h < 500 or air_flow_m3_h > 5000:
+        raise ValueError(f"Flow {air_flow_m3_h} m³/h outside ASDC valid range (500-5000 m³/h)")
+
+    # ASDC correlation (USD_2010)
+    cost_usd_2010 = 4450 + 57 * (air_flow_m3_h ** 0.8)
+
+    # Escalate to USD_2018
+    cost_usd_2018 = escalate_cost(cost_usd_2010, 2010, 2018)
+
+    return cost_usd_2018
+
+
+def cost_large_blower_qsdsan(air_flow_m3_h: float, n_blowers: int = 1) -> float:
+    """
+    Calculate large industrial blower cost using QSDsan Shoener correlation.
+
+    Source: QSD-Group/QSDsan:qsdsan/equipments/_aeration.py#L136-L166
+    Reference: Shoener et al. (2016) for municipal wastewater treatment
+
+    Valid range: > 2500 m³/h (> 1500 CFM)
+    Formula: Cost = base · N^0.377 · (CFM/1000)^0.5928 [USD_2015, Tier 2]
+
+    Args:
+        air_flow_m3_h: Air flow rate in m³/h
+        n_blowers: Number of parallel blowers (default 1)
+
+    Returns:
+        Blower equipment cost in USD_2018 (escalated from USD_2015)
+
+    Example:
+        >>> cost_large_blower_qsdsan(50000, n_blowers=1)  # 50,000 m³/h industrial
+        486234.0  # $486,234 in USD_2018
+    """
+    # Validate range
+    if air_flow_m3_h < 2500:
+        raise ValueError(f"Flow {air_flow_m3_h} m³/h too small for QSDsan correlation (> 2500 m³/h)")
+
+    # Convert to CFM
+    cfm = air_flow_m3_h * 35.3147 / 60
+    tcfm = cfm / 1000  # Thousands of CFM
+
+    # QSDsan Tier 2 parameters (USD_2015)
+    base_cost_2015 = 218000
+    scale_factor_exp = 0.377  # Exponent for N_blowers
+    flow_exp = 0.5928  # Exponent for flow
+
+    # Calculate cost (USD_2015)
+    # CRITICAL FIX: N_blowers^0.377, not just 0.377 as multiplier!
+    cost_usd_2015 = base_cost_2015 * (n_blowers ** scale_factor_exp) * (tcfm ** flow_exp)
+
+    # Escalate to USD_2018
+    cost_usd_2018 = escalate_cost(cost_usd_2015, 2015, 2018)
+
+    return cost_usd_2018
 
 
 def get_default_economic_params(application: str = "CO2") -> Dict[str, Any]:

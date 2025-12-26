@@ -24,11 +24,13 @@ from utils.water_chemistry import WaterChemistryData, prepare_water_chemistry
 logger = logging.getLogger(__name__)
 
 
-# Default Henry's constants (dimensionless, Cgas/Caq at 25°C)
+# Default Henry's constants (dimensionless, Hcc = Cgas/Caq at 25°C)
+# Convention: H > 1 means gas-favoring equilibrium (volatile)
+# Sources: NIST WebBook, Sander compilation (doi:10.5194/acp-15-4399-2015)
 DEFAULT_HENRY_CONSTANTS = {
-    "CO2": 0.83,  # CO2 in water at 25°C
-    "H2S": 0.41,  # H2S in water at 25°C
-    "VOC": 8.59,  # TCE as representative VOC
+    "CO2": 1.19,  # CO2 in water at 25°C (NIST: Hcp=0.035 mol/(kg·bar) → Hcc≈1.19)
+    "H2S": 0.41,  # H2S in water at 25°C (weak acid, less volatile than CO2)
+    "VOC": 8.59,  # TCE as representative VOC (highly volatile)
     "general": 1.0  # Generic default
 }
 
@@ -118,6 +120,23 @@ async def heuristic_sizing(
         water_chemistry_json=water_chemistry_json
     )
 
+    # CO2 application requires explicit pH for carbonate speciation
+    # At pH > 6.3, significant HCO3⁻ present which is not strippable
+    if input_data.application.upper() == "CO2":
+        if input_data.water_ph is None:
+            raise ValueError(
+                "CO2 degassing requires explicit water_ph. "
+                "CO2 speciation depends on carbonate equilibrium (α₀ = f(pH)). "
+                "Provide inlet pH to determine strippable fraction. "
+                "Hint: At pH < 4.5, essentially all TIC is dissolved CO₂."
+            )
+        if input_data.water_ph > 6.5:
+            logger.warning(
+                f"CO2 degassing at pH {input_data.water_ph:.1f}: "
+                f"At pH > 6.3, significant HCO₃⁻ present which is NOT strippable. "
+                f"Consider upstream acidification or verify inlet CO₂ measurement method."
+            )
+
     # Parse/prepare water chemistry (default municipal background when absent)
     water_chemistry_data: WaterChemistryData = prepare_water_chemistry(
         input_data.water_chemistry_json
@@ -198,7 +217,7 @@ async def heuristic_sizing(
         )
 
         logger.info(
-            f"Design basis: Strip {effective_inlet:.2f} mg/L → {effective_outlet:.2f} mg/L "
+            f"Design basis: Strip {effective_inlet:.2f} mg/L -> {effective_outlet:.2f} mg/L "
             f"(Total outlet will be ~{effective_outlet + non_strippable_inlet:.2f} mg/L)"
         )
 
@@ -235,8 +254,8 @@ async def heuristic_sizing(
                     message=(
                         f"Operating at pH {input_data.water_ph:.1f} without acid control. "
                         f"This heuristic assumes FIXED pH throughout tower. "
-                        f"Reality: pH will rise as CO₂ strips → strippable fraction falls. "
-                        f"Apparent λ = {lambda_app:.2f} (barely favorable)."
+                        f"Reality: pH will rise as CO2 strips -> strippable fraction falls. "
+                        f"Apparent lambda = {lambda_app:.2f} (barely favorable)."
                     ),
                     recommendations=[
                         f"Acidify feed to pH 5.5-6.5 (reduces tower height 3-5×)",

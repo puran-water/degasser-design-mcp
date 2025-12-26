@@ -2,6 +2,21 @@
 """
 CLI runner for degasser design tools.
 
+DEPRECATED: This module is deprecated in favor of the JobManager pattern.
+Use combined_simulation_mcp(run_tier3=True) which spawns background jobs
+and provides proper status tracking via get_job_status()/get_job_results().
+
+See:
+    - utils/job_manager.py - Background job execution
+    - utils/tier3_cli.py - New Tier 3 CLI wrapper for JobManager
+    - utils/tier2_cli.py - Tier 2 CLI wrapper for JobManager
+
+This file is kept for backwards compatibility only and will be removed
+in a future version.
+
+---
+
+ORIGINAL DESCRIPTION (deprecated):
 This provides a command-line interface to run Tier 3 costing that bypasses
 MCP transport limitations for long-running async operations (~30 sec).
 
@@ -9,6 +24,14 @@ The MCP STDIO transport has client-side timeouts that cause "unknown message ID"
 errors when calculations take longer than the client's patience window.
 Running via subprocess avoids this issue entirely.
 """
+
+import warnings
+warnings.warn(
+    "cli_runner.py is deprecated. Use combined_simulation_mcp with run_tier3=True "
+    "which uses the JobManager pattern for background execution.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import sys
 import json

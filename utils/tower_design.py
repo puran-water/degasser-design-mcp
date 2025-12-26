@@ -33,6 +33,12 @@ def get_gpdc_flood_capacity(flow_parameter: float) -> float:
     Handbook 8th Edition, Figure 14-55 (Eckert Generalized Pressure Drop Correlation).
     Source: Perry's Handbook Section 14, Equipment for Distillation and Gas Absorption.
 
+    METHODOLOGY LIMITATION (for rigorous design):
+    This implementation uses a digitized flood line for fast heuristic sizing.
+    For rigorous design, the ΔP_flood intersection method should be used per
+    Perry's Eq. 14-142: ΔP_flood = 0.12 × Fp^0.7, where Fp is the packing factor.
+    The digitized approach is acceptable for preliminary/feasibility sizing.
+
     Args:
         flow_parameter: FLG = (L/G) * sqrt(ρG/ρL)
 
@@ -228,13 +234,23 @@ def calculate_ntu_simple(
 def calculate_htu_from_packing_data(
     surface_area_m2_m3: float,
     void_fraction: float = 0.75,
-    lambda_factor: float = 1.0
+    lambda_factor: float = 1.0,
+    surface_tension_n_m: float = 0.072
 ) -> float:
     """
     Calculate HTU (Height of Transfer Unit) from packing properties.
 
     Perry's Equation 14-158: HETP = 93/ap
     where ap = surface area per unit volume (m²/m³)
+
+    IMPORTANT: Perry's Eq. 14-158 was developed for organic/low surface tension
+    systems (σ ≈ 20-30 mN/m). For aqueous systems (σ ≈ 72 mN/m), HETP must be
+    doubled due to underwetting effects.
+
+    References:
+    - Perry's 8th Ed, Section 14, Eq. 14-158
+    - Kister, Distillation Design: "×2 for water due to higher surface tension"
+    - Billet & Schultes: Aqueous vs non-aqueous mass transfer integration
 
     For gas stripping (λ >> 1), HETP ≈ HOG
     Perry's Equation 14-153: HETP = HOG * ln(λ)/(λ-1)
@@ -248,11 +264,13 @@ def calculate_htu_from_packing_data(
         surface_area_m2_m3: Packing surface area per unit volume, m²/m³
         void_fraction: Void fraction (0-1), affects wetting
         lambda_factor: λ = m/(L/G) ratio (for stripping >> 1)
+        surface_tension_n_m: Liquid surface tension, N/m (default 0.072 for water)
 
     Returns:
         HTU in meters (overall gas-phase basis, HOG)
     """
     # Perry's Eq 14-158: HETP = 93/ap (ap in m²/m³, HETP in m)
+    # NOTE: This correlation is for organic systems (σ ≈ 25 mN/m)
     hetp = 93.0 / surface_area_m2_m3
 
     # For high lambda (stripping), HETP ≈ HOG
@@ -271,10 +289,25 @@ def calculate_htu_from_packing_data(
     # High void fraction → worse wetting → higher HTU
     wetting_factor = 1.0 + 0.2 * (void_fraction - 0.75)  # Reference: ε=0.75
 
-    htu = hog * wetting_factor
+    # Aqueous correction factor (Perry's Section 14 note, Kister)
+    # Eq. 14-158 was developed for organic systems (σ ≈ 25 mN/m)
+    # For water (σ ≈ 72 mN/m), underwetting increases HETP by ~2×
+    # Threshold: σ > 50 mN/m triggers aqueous correction
+    AQUEOUS_THRESHOLD_N_M = 0.050  # 50 mN/m
+    if surface_tension_n_m > AQUEOUS_THRESHOLD_N_M:
+        aqueous_correction = 2.0
+        logger.info(
+            f"Applying aqueous correction factor ×{aqueous_correction} "
+            f"for σ={surface_tension_n_m*1000:.0f} mN/m (water system)"
+        )
+    else:
+        aqueous_correction = 1.0
 
-    # Sanity check: HTU should be 0.3 to 3.0 m for typical packings
-    htu = max(0.3, min(3.0, htu))
+    htu = hog * wetting_factor * aqueous_correction
+
+    # Sanity check: HTU should be 0.3 to 6.0 m for typical packings
+    # Upper bound increased for aqueous systems with correction applied
+    htu = max(0.3, min(6.0, htu))
 
     return htu
 

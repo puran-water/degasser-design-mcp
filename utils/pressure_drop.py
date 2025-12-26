@@ -86,7 +86,7 @@ def calculate_robbins_pressure_drop(
 
         logger.info(
             f"Robbins correlation (fluids): "
-            f"ΔP={total_pressure_drop_pa_m:.1f} Pa/m ({total_pressure_drop_pa_m * 0.3048 / 249.089:.3f} in H2O/ft)"
+            f"dP={total_pressure_drop_pa_m:.1f} Pa/m ({total_pressure_drop_pa_m * 0.3048 / 249.089:.3f} in H2O/ft)"
         )
 
         return {
@@ -161,8 +161,13 @@ def calculate_accessory_pressure_drops(
     dynamic_pressure_pa = 0.5 * gas_density_kg_m3 * gas_velocity_m_s**2
     momentum_losses_pa = 2 * dynamic_pressure_pa
 
-    # 5. Ductwork and silencers (5-15% of bed pressure drop)
-    ductwork_silencer_pa = ductwork_silencer_fraction * packed_bed_pressure_drop_pa
+    # 5. Ductwork and silencers (5-15% of bed pressure drop, minimum 25 Pa)
+    # Minimum floor prevents unrealistic low values when bed ΔP is small
+    # Real duct losses are geometry-driven and typically 25-100 Pa
+    ductwork_silencer_pa = max(
+        25.0,  # Minimum realistic duct/silencer loss (Pa)
+        ductwork_silencer_fraction * packed_bed_pressure_drop_pa
+    )
 
     # 6. Tower elevation/static head (ρ·g·H)
     # Air column static pressure

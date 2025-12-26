@@ -221,45 +221,44 @@ class TestIntegratedBlowerSizing:
             motor_efficiency=0.92
         )
 
-        # Check that blower specs are included
-        assert 'blower_specs' in result
-        assert result['blower_specs'] is not None
+        # Result is Tier1Outcome with nested result attribute
+        assert result.result.blower_specs is not None
 
-        blower = result['blower_specs']
+        blower = result.result.blower_specs
 
         # Check blower type selection (should be centrifugal for low pressure)
-        assert blower['blower_type'] in ['Multistage Centrifugal', 'Rotary Lobe (Roots)']
+        assert blower.blower_type in ['Multistage Centrifugal', 'Rotary Lobe (Roots)']
 
         # Check compression ratio is reasonable (< 1.3 for air stripping)
-        assert 1.0 < blower['compression_ratio'] < 1.3, \
-            f"Compression ratio {blower['compression_ratio']:.3f} outside expected range"
+        assert 1.0 < blower.compression_ratio < 1.3, \
+            f"Compression ratio {blower.compression_ratio:.3f} outside expected range"
 
         # Check motor power is reasonable for this duty (< 15 hp expected)
-        assert 1.0 < blower['motor_power_hp'] < 20.0, \
-            f"Motor power {blower['motor_power_hp']:.1f} hp outside expected range"
+        assert 1.0 < blower.motor_power_hp < 20.0, \
+            f"Motor power {blower.motor_power_hp:.1f} hp outside expected range"
 
         # Check discharge pressure is reasonable
-        assert 0.1 < blower['discharge_pressure_psig'] < 5.0, \
-            f"Discharge pressure {blower['discharge_pressure_psig']:.2f} psig outside expected range"
+        assert 0.1 < blower.discharge_pressure_psig < 5.0, \
+            f"Discharge pressure {blower.discharge_pressure_psig:.2f} psig outside expected range"
 
         # Check pressure drop components
-        assert blower['packed_bed_pressure_drop_pa'] > 0
-        assert blower['inlet_distributor_pressure_drop_pa'] > 0
-        assert blower['safety_factor_pa'] > 0
+        assert blower.packed_bed_pressure_drop_pa > 0
+        assert blower.inlet_distributor_pressure_drop_pa > 0
+        assert blower.safety_factor_pa > 0
 
         # Total should equal sum of components
         total_calculated = (
-            blower['packed_bed_pressure_drop_pa'] +
-            blower['inlet_distributor_pressure_drop_pa'] +
-            blower['outlet_distributor_pressure_drop_pa'] +
-            blower['demister_pressure_drop_pa'] +
-            blower['momentum_losses_pa'] +
-            blower['ductwork_silencer_pressure_drop_pa'] +
-            blower['elevation_head_pa'] +
-            blower['safety_factor_pa']
+            blower.packed_bed_pressure_drop_pa +
+            blower.inlet_distributor_pressure_drop_pa +
+            blower.outlet_distributor_pressure_drop_pa +
+            blower.demister_pressure_drop_pa +
+            blower.momentum_losses_pa +
+            blower.ductwork_silencer_pressure_drop_pa +
+            blower.elevation_head_pa +
+            blower.safety_factor_pa
         )
 
-        assert abs(total_calculated - blower['total_system_pressure_drop_pa']) < 1.0, \
+        assert abs(total_calculated - blower.total_system_pressure_drop_pa) < 1.0, \
             "Pressure drop components don't sum to total"
 
     @pytest.mark.asyncio
@@ -275,8 +274,8 @@ class TestIntegratedBlowerSizing:
             include_blower_sizing=False
         )
 
-        # Blower specs should be None
-        assert result.get('blower_specs') is None
+        # Blower specs should be None (access via Tier1Outcome.result)
+        assert result.result.blower_specs is None
 
     @pytest.mark.asyncio
     async def test_blower_efficiency_override(self):
@@ -293,11 +292,11 @@ class TestIntegratedBlowerSizing:
             motor_efficiency=0.95
         )
 
-        blower = result['blower_specs']
+        blower = result.result.blower_specs
 
         # Check that overrides were applied
-        assert blower['blower_efficiency'] == 0.75
-        assert blower['motor_efficiency'] == 0.95
+        assert blower.blower_efficiency == 0.75
+        assert blower.motor_efficiency == 0.95
 
 
 class TestPressureDropComponents:

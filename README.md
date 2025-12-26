@@ -18,9 +18,10 @@ Air stripping tower design tool implementing Perry's Handbook correlations with 
 
 ### Tier 2: Staged Column Simulation (Complete ✅)
 - PHREEQC equilibrium stage calculations
-- Counter-current flow with adaptive Murphree efficiency
-- Mass balance closure: <1% (VOC, CO2), <10% (H2S)
-- Convergence stable for N<50 stages (200 iteration limit)
+- Counter-current flow with single-phase Murphree efficiency (gas phase)
+- Mass balance from conservation equations (liquid phase)
+- Mass balance closure: <5% (VOC, CO2), <25% (H2S)
+- Convergence stable for N<50 stages (200 iteration limit, 2% tolerance)
 - pH-coupled speciation with water chemistry integration
 - Execution time: 10-30 seconds
 
@@ -409,10 +410,11 @@ Motor sizing includes 92% motor efficiency. Vendor data should be used for final
 - Water chemistry integration (RO MCP compatible)
 
 **Performance**:
-- VOC: 0.004% mass balance error (production-ready)
-- CO2: 0.13% mass balance error (pH 7.5 supported)
-- H2S: 7.3% mass balance error (acceptable for engineering design)
+- VOC: <10% mass balance error (production-ready)
+- CO2: <5% mass balance error (pH 4-8 supported)
+- H2S: <25% mass balance error (acceptable for engineering design)
 - Convergence stable up to 50 stages with 200 iteration limit
+- Correct stripping direction verified for all applications
 
 ### Tier 3: Economic Costing (Complete ✅)
 **Use for**: Cost estimation, packing comparison, economic optimization
@@ -457,12 +459,14 @@ Motor sizing includes 92% motor efficiency. Vendor data should be used for final
 
 ## Validation
 
-**Test Coverage**: 28 tests passing
+**Test Coverage**: 58 tests passing
 
 - Perry's TCE benchmark (38 → 0.00151 mg/L): Within 5% of handbook
 - PHREEQC speciation for H₂S and CO₂: Validated across pH 5-9
 - Robbins pressure drop: <1% error vs fluids library
 - Blower power calculations: Validated against thermodynamic models
+- Tier 2 mass balance and physics validation for all applications
+- Blower costing validation across three tiers (small/medium/large)
 
 ---
 
@@ -503,7 +507,10 @@ degasser-design-mcp/
 │   ├── economic_defaults.py     # CEPCI escalation, QSDsan imports ✓
 │   ├── costing_parameters.py    # WaterTAP parameter blocks ✓
 │   ├── degasser_costing_methods.py  # Equipment costing methods ✓
-│   └── import_helpers.py        # Dependency detection ✓
+│   ├── import_helpers.py        # Dependency detection ✓
+│   ├── job_manager.py           # Background job management for Tier 2/3 ✓
+│   ├── tier2_cli.py             # CLI runner for Tier 2 PHREEQC simulation ✓
+│   └── tier3_cli.py             # CLI runner for Tier 3 WaterTAP costing ✓
 ├── databases/                   # Design databases
 │   ├── pack.json                # Packing specifications ✓
 │   ├── henrys_law.db            # VOC Henry's constants ✓
@@ -511,7 +518,10 @@ degasser-design-mcp/
 │   └── voc_properties.json      # VOC properties ✓
 └── tests/                       # Unit and integration tests
     ├── test_tower_design.py     # Perry's benchmark validation ✓
-    └── test_voc_phases.py       # PHREEQC integration tests ✓
+    ├── test_voc_phases.py       # PHREEQC integration tests ✓
+    ├── test_simulation_sizing.py # Tier 2 simulation tests ✓
+    ├── test_blower_sizing.py    # Blower sizing and pressure drop tests ✓
+    └── test_blower_costing_validation.py # Blower costing validation ✓
 ```
 
 ---

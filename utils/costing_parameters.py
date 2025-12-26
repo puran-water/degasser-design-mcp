@@ -58,7 +58,7 @@ def build_air_blower_cost_param_block(blk):
 
     # Air piping cost coefficients (Shoener et al., 2016, USD_2015)
     # Three tiers based on total CFM:
-    # ≤1000 CFM: 617.2 * AFF * TCFM^0.2553
+    # <=1000 CFM: 617.2 * AFF * TCFM^0.2553
     # 1000-10000 CFM: 1.43 * AFF * TCFM^1.1337
     # >10000 CFM: 28.59 * AFF * TCFM^0.8085
 
@@ -66,13 +66,13 @@ def build_air_blower_cost_param_block(blk):
         initialize=escalate_cost(617.2, 2015, 2025),
         units=pyunits.USD_2018,
         mutable=True,
-        doc="Air piping cost coefficient for ≤1000 CFM (USD_2025)"
+        doc="Air piping cost coefficient for <=1000 CFM (USD_2025)"
     )
 
     blk.piping_cost_tier1_exp = Param(
         initialize=0.2553,
         units=pyunits.dimensionless,
-        doc="Air piping cost exponent for ≤1000 CFM"
+        doc="Air piping cost exponent for <=1000 CFM"
     )
 
     blk.piping_cost_tier2_coeff = Param(
@@ -137,7 +137,7 @@ def build_air_blower_cost_param_block(blk):
     blk.blower_tier1_max_cfm = Param(
         initialize=7500,
         units=pyunits.dimensionless,  # CFM
-        doc="Maximum CFM per blower in tier 1 (≤30000 total)"
+        doc="Maximum CFM per blower in tier 1 (<=30000 total)"
     )
 
     blk.blower_tier1_base_cost = Param(

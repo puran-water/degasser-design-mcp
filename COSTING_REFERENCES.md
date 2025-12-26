@@ -15,39 +15,166 @@ All equipment costs are sourced from validated open-source frameworks:
 
 ## 1. Air Blower System Costing
 
-### Source: QSDsan
+### Three-Tier Hybrid Correlation System
+
+We implement an intelligent tier selection system that uses different validated correlations based on blower size. This avoids scale mismatch errors (e.g., applying industrial wastewater correlations to small HVAC blowers).
+
+---
+
+### **Tier 1: Small Blowers (< 7.5 kW / < 10 HP)**
+
+**Source**: IDAES SSLW (Seider, Seader, Lewin, Widagdo)
+- **Repository**: https://github.com/IDAES/idaes-pse
+- **Module**: `idaes.models.costing.SSLW`
+- **Lines**: 1193-1258
+- **Valid Range**: 0.75-7.5 kW (1-10 HP)
+- **Base Year**: USD_CE500 (2002, CEPCI=395.6)
+- **Escalation**: CE500 → 2018 (395.6 → 603.1)
+
+**Cost Equation** (Power-based):
+```python
+hp = power_kw * 1.341  # Convert kW to HP
+
+# IDAES SSLW rotary blower coefficients
+Cost_CE500 = exp(7.59176 + 0.79320·ln(hp) + 0.01363·ln²(hp))
+
+# Apply material factor (1.0=Al, 2.5=SS304, 3.0=SS316)
+Cost_CE500 = Cost_CE500 * material_factor
+
+# Escalate to USD_2018
+Cost_USD_2018 = Cost_CE500 * (CEPCI_2018 / CEPCI_2002)
+                = Cost_CE500 * 1.524
+```
+
+**Example**: 0.76 kW (1 HP) aluminum blower = $3,035 USD_2018
+
+**Why This Tier?**: Small blowers (HVAC, small treatment plants) are priced based on motor power, not volumetric flow. IDAES SSLW uses validated Seider textbook correlations specifically for this range.
+
+---
+
+### **Tier 2: Medium Blowers (7.5-37.5 kW / 10-50 HP)**
+
+**Source**: WaterTAP-Reflo ASDC (Air Stripping Design Code)
+- **Repository**: https://github.com/watertap-org/watertap-reflo
+- **Module**: `src/watertap_contrib/reflo/costing/units/air_stripping.py`
+- **Lines**: 217-236
+- **Valid Range**: 500-5000 m³/h (300-3000 CFM)
+- **Base Year**: USD_2010 (CEPCI=550.8)
+- **Escalation**: 2010 → 2018 (550.8 → 603.1)
+
+**Cost Equation** (Flow-based):
+```python
+# ASDC correlation from EPA dataset
+Cost_USD_2010 = 4450 + 57 * (air_flow_m3_h ** 0.8)
+
+# Escalate to USD_2018
+Cost_USD_2018 = Cost_USD_2010 * (CEPCI_2018 / CEPCI_2010)
+                = Cost_USD_2010 * 1.095
+```
+
+**Examples**:
+- 500 m³/h: $13,877 USD_2018
+- 2000 m³/h: $32,168 USD_2018
+- 4000 m³/h: $52,397 USD_2018
+
+**Why This Tier?**: Medium centrifugal blowers used in water treatment are best correlated by volumetric flow rate. ASDC dataset is specifically for air stripping applications.
+
+---
+
+### **Tier 3: Large Industrial Blowers (> 37.5 kW / > 50 HP)**
+
+**Source**: QSDsan Shoener Correlation
 - **Repository**: https://github.com/QSD-Group/QSDsan
-- **Module**: `qsdsan.equipments._aeration.Blower`
-- **Version**: v1.4.2+
-- **Base year**: USD_2015
-- **Escalation**: CEPCI 2015 → 2025 (556.8 → 850.0)
+- **Module**: `qsdsan/equipments/_aeration.py`
+- **Lines**: 136-166
+- **Valid Range**: > 2500 m³/h (> 1500 CFM)
+- **Base Year**: USD_2015 (CEPCI=556.8)
+- **Escalation**: 2015 → 2018 (556.8 → 603.1)
 
-### Cost Equations
+**Cost Equation** (CFM-based with blower count):
+```python
+cfm = air_flow_m3_h * 35.3147 / 60  # Convert m³/h to CFM
+tcfm = cfm / 1000  # Thousands of CFM
 
-**Blower Capital Cost** (Three-tier sizing):
-```
-Tier 1 (≤7,500 CFM):  Capital = 88,542 * N_blowers^0.377 * (CFM/1000)^0.5928  [USD_2025]
-Tier 2 (≤18,000 CFM): Capital = 120,614 * N_blowers^0.377 * (CFM/1000)^0.5928  [USD_2025]
-Tier 3 (≤100,000 CFM): Capital = 328,159 * N_blowers^0.377 * (CFM/1000)^0.4802  [USD_2025]
-```
+# QSDsan Tier 2 correlation (industrial wastewater)
+base_cost_2015 = 218000
+Cost_USD_2015 = base_cost_2015 * (N_blowers ** 0.377) * (tcfm ** 0.5928)
 
-**Air Piping Cost**:
-```
-Tier 1 (≤1,000 CFM):    941.97 USD_2025 (flat)
-Tier 2 (1,000-10,000):  941.97 + 48.68 * (CFM - 1000)  [USD_2025]
-Tier 3 (>10,000):       941.97 + 48.68*9000 + 43.64 * (CFM - 10000)  [USD_2025]
+# Escalate to USD_2018
+Cost_USD_2018 = Cost_USD_2015 * (CEPCI_2018 / CEPCI_2015)
+                = Cost_USD_2015 * 1.083
 ```
 
-**Blower Building**:
+**Examples**:
+- 5000 m³/h (1 blower): $447,750 USD_2018
+- 10000 m³/h (1 blower): $675,284 USD_2018
+- 20000 m³/h (1 blower): $1,018,444 USD_2018
+
+**Why This Tier?**: Large industrial blowers for municipal wastewater treatment. Costs include extensive air piping networks, blower buildings, and full installation infrastructure.
+
+**Critical Fix**: Formula bug corrected from `base * 0.377` to `base * (N_blowers^0.377)`.
+
+---
+
+### Tier Selection Logic
+
+```python
+if blower_power_kw < 7.5:  # < 10 HP
+    # Tier 1: IDAES SSLW (power-based)
+    cost = cost_small_blower_idaes_sslw(power_kw, material_factor)
+
+elif blower_power_kw < 37.5:  # 10-50 HP
+    # Tier 2: ASDC (flow-based)
+    cost = cost_medium_blower_asdc(air_flow_m3_h)
+
+else:  # > 50 HP
+    # Tier 3: QSDsan (CFM-based, industrial)
+    cost = cost_large_blower_qsdsan(air_flow_m3_h, n_blowers)
 ```
-Area = 128 * TCFM^0.256 ft²
-Cost = Area * 137.39 USD_2025/ft²
+
+---
+
+### Tier Transitions
+
+**Tier 1 → Tier 2**: Smooth transition at ~7.5 kW. Cost ratio 1.0-1.2x.
+
+**Tier 2 → Tier 3**: Significant jump (5-10x) expected due to scope change:
+- Tier 2: Equipment cost only
+- Tier 3: Total installed system with building, piping network, infrastructure
+
+---
+
+### Piping and Building Costs
+
+**Small/Medium (Tier 1/2)**:
+```python
+piping_cost = blower_equipment_cost * 0.10  # Simplified
+building_cost = blower_equipment_cost * 0.05  # (Tier 1) or 0.15 (Tier 2)
 ```
+
+**Large (Tier 3)** - Uses QSDsan correlations:
+```python
+# Air Piping Cost
+piping_cost_usd_2015 = 28.59 * AFF * (TCFM ** 0.8085)
+# Where AFF = Air Flow Fraction (1.5 for above-ground)
+
+# Blower Building
+building_area_ft2 = 128 * (TCFM ** 0.256)
+building_cost_usd_2015 = building_area_ft2 * 90  # USD/ft²
+```
+
+---
 
 ### Validation
-- Used in QSDsan for wastewater treatment plant costing
-- Three-tier structure matches industrial blower sizing practice
-- Correlations validated in QSDsan test suite
+
+**Comprehensive Test Suite**: `tests/test_blower_costing_validation.py`
+- 18 test cases across all three tiers
+- Material factor validation (Al, SS304, SS316)
+- N_blowers scaling validation (N^0.377)
+- Tier transition continuity checks
+- Real-world design case validation
+
+**Results**: All tests pass. 96.3% cost reduction for bug case (0.76 kW blower: $82k → $3k).
 
 ---
 
@@ -137,6 +264,8 @@ Where: A = tower cross-sectional area (m²)
 CEPCI_INDICES = {
     1984: 322.7,
     1990: 357.6,   # WaterTAP CSTR base year
+    2002: 395.6,   # IDAES SSLW CE500 base year
+    2010: 550.8,   # WaterTAP-Reflo ASDC base year
     2015: 556.8,   # QSDsan blower base year
     2017: 567.5,   # BioSTEAM default
     2018: 603.1,   # WaterTAP standard year
@@ -341,6 +470,7 @@ current_cepci = bst.CE  # Auto-updated with BioSTEAM releases
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2025-10-16
+**Document Version**: 2.0
+**Last Updated**: 2025-10-17
+**Changes**: Implemented three-tier hybrid blower costing system (IDAES + ASDC + QSDsan)
 **Maintained By**: degasser-design-mcp project
