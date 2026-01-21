@@ -39,3 +39,4 @@ tmp/
 
 # Codex/OpenAI credentials
 .codex/
+.venv/
